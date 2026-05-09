@@ -1,0 +1,3 @@
+- POC project using LangGraph Deep Agents.
+- A main agent will communicate with a weather agent that retrives weather data from https://openweathermap.org/api\
+- You can get an API key from https://build.nvidia.com for a free llm model for the agents
