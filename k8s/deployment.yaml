@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deep-agents
+  labels:
+    app: deep-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deep-agents
+  template:
+    metadata:
+      labels:
+        app: deep-agents
+    spec:
+      containers:
+        - name: deep-agents
+          image: deep-agents:latest
+          imagePullPolicy: Never        # use the locally-built minikube image
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: deep-agents-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
