@@ -27,14 +27,14 @@ async def main():
     weather_subagent = build_weather_subagent(tools)
     graph = build_main_agent(weather_subagent)
 
-        query = "What is the current weather in London?"
-        print(f"Query: {query}\n")
+    query = "What is the current weather in London?"
+    print(f"Query: {query}\n")
 
-        result = await graph.ainvoke({"messages": [HumanMessage(content=query)]})
+    result = await graph.ainvoke({"messages": [HumanMessage(content=query)]})
 
-        for msg in result["messages"]:
-            if getattr(msg, "type", "") == "ai" and msg.content:
-                print(f"[assistant]: {msg.content}\n")
+    for msg in result["messages"]:
+        if getattr(msg, "type", "") == "ai" and msg.content:
+            print(f"[assistant]: {msg.content}\n")
 
 
 if __name__ == "__main__":

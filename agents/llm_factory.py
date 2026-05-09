@@ -3,14 +3,15 @@ certificate store. Required on corporate networks where an SSL-inspection proxy
 presents a corporate CA that is not in certifi's bundle but IS in the Windows store.
 """
 
+import logging
 import os
 import ssl
-import logging
 
 import httpx
 import truststore
 from langchain_anthropic import ChatAnthropic
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 
 log = logging.getLogger(__name__)
@@ -79,14 +80,16 @@ def _patch_langchain_anthropic_ssl() -> None:
 _patch_langchain_anthropic_ssl()
 
 
-def get_llm(model_name: str | None = None) -> ChatAnthropic | ChatOpenAI | ChatNVIDIA:
-    """Return the LLM selected by LLM_PROVIDER_SELECTOR env var (ANTHROPIC, PORTKEY, NVIDIA)."""
+def get_llm(model_name: str | None = None) -> ChatAnthropic | ChatOpenAI | ChatNVIDIA | ChatOllama:
+    """Return the LLM selected by LLM_PROVIDER_SELECTOR env var (ANTHROPIC, PORTKEY, NVIDIA, OLLAMA)."""
     provider = os.getenv("LLM_PROVIDER_SELECTOR", "ANTHROPIC").upper()
     log.info("LLM provider selected: %s", provider)
     if provider == "PORTKEY":
         return get_openai_llm(model_name)
     if provider == "NVIDIA":
         return get_nvidia_llm(model_name)
+    if provider == "OLLAMA":
+        return get_local_ollama(model_name)
     return get_anthropic_llm(model_name)
 
 
@@ -121,5 +124,22 @@ def get_nvidia_llm(model_name: str | None = None) -> ChatNVIDIA:
         model=model_name,
         base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
         api_key=os.getenv("NVIDIA_API_KEY"),  # type: ignore[arg-type]
+        temperature=0,
+    )
+
+
+def get_local_ollama(model_name: str | None = None) -> ChatOllama:
+    """Return a ChatOllama client pointed at a local Ollama instance.
+
+    ChatOllama uses Ollama's native API rather than the OpenAI-compatible shim,
+    which ensures tool/function-call messages are formatted correctly for local models.
+    OLLAMA_BASE_URL and OLLAMA_MODEL are read from the environment.
+    """
+    if model_name is None:
+        model_name = os.getenv("OLLAMA_MODEL", "mistral-nemo:latest")
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    return ChatOllama(
+        model=model_name,
+        base_url=base_url,
         temperature=0,
     )
