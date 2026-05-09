@@ -62,7 +62,7 @@ async def chat(req: ChatRequest, request: Request):
             ):
                 async for event in graph.astream_events(
                     {"messages": messages},
-                    config={"callbacks": [langfuse]},
+                    config={"callbacks": [langfuse], "recursion_limit": 10},
                     version="v2",
                 ):
                     etype = event["event"]

@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
     client = MultiServerMCPClient(get_weather_mcp_config())
     tools = await client.get_tools()
     weather_subagent = build_weather_subagent(tools)
-    app.state.graph = build_main_agent(weather_subagent)
+    app.state.graph = build_main_agent(weather_subagent, tools=tools)
     yield
 
 

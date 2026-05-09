@@ -79,23 +79,9 @@ def _patch_langchain_anthropic_ssl() -> None:
 _patch_langchain_anthropic_ssl()
 
 
-def get_llm(model_name: str | None = None, deepagents: bool = False) -> ChatAnthropic | ChatOpenAI | ChatNVIDIA:
-    """Return the LLM selected by LLM_PROVIDER_SELECTOR env var (ANTHROPIC, PORTKEY, NVIDIA).
-
-    deepagents=True enforces Anthropic regardless of the selector, because the deepagents
-    framework injects Claude-specific system prompts (BASE_AGENT_PROMPT, WRITE_TODOS_SYSTEM_PROMPT)
-    that cause non-Anthropic models to loop until the LangGraph recursion limit is hit.
-    """
+def get_llm(model_name: str | None = None) -> ChatAnthropic | ChatOpenAI | ChatNVIDIA:
+    """Return the LLM selected by LLM_PROVIDER_SELECTOR env var (ANTHROPIC, PORTKEY, NVIDIA)."""
     provider = os.getenv("LLM_PROVIDER_SELECTOR", "ANTHROPIC").upper()
-
-    if deepagents and provider != "ANTHROPIC":
-        log.warning(
-            "LLM_PROVIDER_SELECTOR=%s is not supported with deepagents (Claude-specific prompts). "
-            "Falling back to ANTHROPIC.",
-            provider,
-        )
-        return get_anthropic_llm(model_name)
-
     log.info("LLM provider selected: %s", provider)
     if provider == "PORTKEY":
         return get_openai_llm(model_name)

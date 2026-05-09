@@ -51,5 +51,5 @@ def build_weather_subagent(tools: list, model_name: str | None = None) -> SubAge
         ),
         "system_prompt": WEATHER_AGENT_PROMPT,
         "tools": tools,
-        "model": get_llm(model_name, deepagents=True),  # deepagents requires Anthropic Claude
+        "model": get_llm(model_name),  # provider selected by LLM_PROVIDER_SELECTOR env var
     }

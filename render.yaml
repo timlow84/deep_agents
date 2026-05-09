@@ -12,7 +12,7 @@ services:
       - key: OPENWEATHERMAP_API_KEY
         sync: false
       - key: LLM_PROVIDER_SELECTOR
-        value: ANTHROPIC
+        value: NVIDIA
       - key: LOG_LEVEL
         value: WARNING
       - key: NVIDIA_API_KEY
