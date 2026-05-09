@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: deep-agents
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-haiku-4-5-20251001
+      - key: OPENWEATHERMAP_API_KEY
+        sync: false
+      - key: LLM_PROVIDER_SELECTOR
+        value: ANTHROPIC
+      - key: LOG_LEVEL
+        value: WARNING
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: NVIDIA_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: NVIDIA_MODEL
+        value: meta/llama-3.3-70b-instruct
+      - key: PORTKEY_MODEL
+        value: Qwen2.5:7b
+      - key: PORTKEY_BASE_URL
+        sync: false
+      - key: PORTKEY_API_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_HOST
+        value: https://jp.cloud.langfuse.com
