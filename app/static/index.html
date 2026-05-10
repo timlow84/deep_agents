@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Weather Chatbot</title>
+  <title>SG Carpark + Weather Chatbot</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -27,9 +29,29 @@
       box-shadow: 0 2px 8px rgba(0,0,0,.2);
       flex-shrink: 0;
     }
-    header .icon { font-size: 1.6rem; }
-    header h1   { font-size: 1.1rem; font-weight: 600; letter-spacing: .3px; }
-    header p    { font-size: .75rem; opacity: .8; margin-left: auto; }
+    header .weather-icon { font-size: 1.45em; vertical-align: middle; line-height: 1; }
+    /* h1 fills remaining space and clips from the right when narrow */
+    header h1 {
+      font-size: 1.1rem; font-weight: 600; letter-spacing: .3px;
+      flex: 1 1 auto; min-width: 0;
+      overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    }
+    /* "Powered by Claude Code + OpenWeatherMap +" — never shrinks; h1 truncates first */
+    .powered-text {
+      flex: 0 0 auto;
+      overflow: hidden; white-space: nowrap;
+      font-size: .75rem; opacity: .8;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .powered-text img { width: 22px; height: 22px; border-radius: 4px; flex-shrink: 0; }
+    /* logos section — never shrinks, always visible */
+    .header-logos {
+      flex: 0 0 auto;
+      display: flex; align-items: center; gap: 6px;
+      font-size: .75rem; opacity: .8;
+    }
+    .header-logos img.lta-logo     { width: auto; height: 30px; border-radius: 4px; }
+    .header-logos img.leaflet-logo { width: auto; height: 20px; border-radius: 3px; }
 
     /* ── Message list ── */
     #messages {
@@ -40,7 +62,13 @@
       flex-direction: column;
       gap: 10px;
       scroll-behavior: smooth;
+      scrollbar-width: thin;
+      scrollbar-color: #1a73e8 #e8edf5;
     }
+    #messages::-webkit-scrollbar        { width: 8px; }
+    #messages::-webkit-scrollbar-track  { background: #e8edf5; }
+    #messages::-webkit-scrollbar-thumb  { background: #1a73e8; border-radius: 4px; }
+    #messages::-webkit-scrollbar-thumb:hover { background: #1558b0; }
 
     /* ── Welcome placeholder ── */
     .welcome {
@@ -49,9 +77,30 @@
       color: #5f6368;
       user-select: none;
     }
-    .welcome .hero { font-size: 3.5rem; display: block; margin-bottom: 8px; }
-    .welcome h2    { font-size: 1.1rem; font-weight: 500; margin-bottom: 4px; }
-    .welcome p     { font-size: .85rem; }
+    .welcome .hero { font-size: 3.5rem; display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 8px; }
+    .welcome h2    { font-size: 1.1rem; font-weight: 600; margin-bottom: 6px; color: #202124; }
+    .welcome > p   { font-size: .85rem; margin-bottom: 14px; }
+    .welcome-cards { display: flex; flex-direction: column; gap: 10px; text-align: left; max-width: 440px; }
+    .welcome-card  {
+      background: #fff;
+      border-radius: 12px;
+      padding: 13px 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      font-size: .84rem;
+      line-height: 1.65;
+      color: #3c4043;
+    }
+    .welcome-card strong { display: block; margin-bottom: 3px; color: #202124; font-size: .88rem; }
+    .welcome-card .hint  { color: #80868b; font-size: .78rem; margin-top: 4px; }
+    .welcome-card code {
+      background: #e8f0fe;
+      color: #1a73e8;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: .82rem;
+      font-weight: 600;
+    }
 
     /* ── Bubble base ── */
     .bubble {
@@ -132,15 +181,204 @@
       30%            { transform: translateY(-5px); }
     }
 
+    /* ── Weather card ── */
+    .weather-card {
+      align-self: flex-start;
+      width: min(100%, 400px);
+      background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+      color: #fff;
+      border-radius: 18px;
+      padding: 20px 24px;
+      box-shadow: 0 4px 16px rgba(26,115,232,.35);
+      animation: fadeIn .18s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .weather-card .wc-location {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: .3px;
+    }
+    .weather-card .wc-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .weather-card .wc-icon { width: 64px; height: 64px; }
+    .weather-card .wc-temp {
+      font-size: 2.8rem;
+      font-weight: 300;
+      line-height: 1;
+    }
+    .weather-card .wc-desc {
+      font-size: .9rem;
+      opacity: .9;
+      text-transform: capitalize;
+    }
+    .weather-card .wc-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .weather-card .wc-stat {
+      background: rgba(255,255,255,.15);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: .78rem;
+    }
+    .weather-card .wc-stat-label { opacity: .75; margin-bottom: 2px; }
+    .weather-card .wc-stat-value { font-weight: 700; font-size: .9rem; }
+    .weather-card .wc-maps-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 4px;
+      font-size: .78rem;
+      color: rgba(255,255,255,.85);
+      text-decoration: none;
+    }
+    .weather-card .wc-maps-link:hover { color: #fff; }
+
+    /* ── Carpark table ── */
+    .carpark-table-wrap {
+      align-self: flex-start;
+      width: min(100%, 720px);
+      border-radius: 14px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.1);
+      overflow: hidden;        /* clips content to rounded corners */
+      animation: fadeIn .18s ease;
+    }
+    .carpark-table-scroll {
+      overflow-x: auto;
+      overflow-y: scroll;
+      padding-bottom: 14px; /* match wrap's border-radius so last row is never clipped */
+      scrollbar-width: thin;
+      scrollbar-color: #1a73e8 #e8edf5;
+    }
+    .carpark-table-scroll::-webkit-scrollbar        { width: 8px; }
+    .carpark-table-scroll::-webkit-scrollbar-track  { background: #e8edf5; }
+    .carpark-table-scroll::-webkit-scrollbar-thumb  { background: #1a73e8; border-radius: 4px; }
+    .carpark-table-scroll::-webkit-scrollbar-thumb:hover { background: #1558b0; }
+    .carpark-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .85rem;
+      background: #fff;
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .carpark-table thead tr {
+      background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+      color: #fff;
+    }
+    .carpark-table thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+    }
+    .carpark-table th {
+      padding: 11px 14px;
+      text-align: left;
+      font-weight: 600;
+      font-size: .8rem;
+      white-space: nowrap;
+      letter-spacing: .3px;
+    }
+    .carpark-table td {
+      padding: 9px 14px;
+      border-bottom: 1px solid #e8edf5;
+      vertical-align: middle;
+    }
+    .carpark-table tbody tr:last-child td { border-bottom: none; }
+    .carpark-table tbody tr:nth-child(even) { background: #f0f4f8; }
+    .carpark-table tbody tr:hover { background: #ddeafc; }
+    .carpark-table tbody tr.row-highlighted,
+    .carpark-table tbody tr.row-highlighted:hover { background: #fff9c4 !important; outline: 2px solid #f9a825; outline-offset: -2px; }
+    .lots-available { font-weight: 600; color: #1a73e8; }
+    .lots-full      { font-weight: 600; color: #c5221f; }
+    .rate-active    { font-weight: 700; color: #1a73e8; }
+    .rate-inactive  { color: #80868b; }
+    .carpark-table th.rate-active-hdr { text-decoration: underline; text-underline-offset: 3px; }
+    .map-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      background: #1a73e8;
+      color: #fff;
+      font-size: .78rem;
+      font-weight: 500;
+      text-decoration: none;
+      white-space: nowrap;
+      transition: background .15s;
+    }
+    .map-link:hover { background: #1558b0; }
+
+    /* ── Carpark map ── */
+    .carpark-map-wrap {
+      align-self: flex-start;
+      width: min(100%, 720px);
+      height: 425px;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 2px 10px rgba(0,0,0,.1);
+      animation: fadeIn .18s ease;
+    }
+    .carpark-map-wrap .leaflet-container { height: 100%; border-radius: 14px; }
+
     /* ── Input area ── */
     #input-area {
       flex-shrink: 0;
+      position: relative;
       background: #fff;
       border-top: 1px solid #e0e0e0;
       padding: 12px 16px;
       display: flex;
       gap: 10px;
       align-items: center;
+    }
+
+    /* ── Slash-command autocomplete menu ── */
+    #slash-menu {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 4px);
+      left: 16px;
+      right: 16px;
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 12px;
+      box-shadow: 0 -4px 18px rgba(0,0,0,.13);
+      overflow: hidden;
+      z-index: 20;
+    }
+    .slash-item {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 10px 16px;
+      cursor: pointer;
+      transition: background .12s;
+    }
+    .slash-item:not(:last-child) { border-bottom: 1px solid #f0f4f8; }
+    .slash-item:hover, .slash-item.active { background: #e8f0fe; }
+    .slash-item .slash-cmd {
+      font-family: 'Courier New', monospace;
+      font-weight: 700;
+      color: #1a73e8;
+      font-size: .88rem;
+      flex-shrink: 0;
+    }
+    .slash-item .slash-desc {
+      font-size: .78rem;
+      color: #5f6368;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     #user-input {
       flex: 1;
@@ -172,26 +410,63 @@
     #send-btn:hover:not(:disabled) { background: #1558b0; }
     #send-btn:active:not(:disabled) { transform: scale(.93); }
     #send-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+    /* ── Author credit ── */
+    #author-credit {
+      flex-shrink: 0;
+      text-align: right;
+      padding: 3px 16px;
+      font-size: .72rem;
+      color: #9aa0a6;
+      background: #f0f4f8;
+      user-select: none;
+    }
   </style>
 </head>
 <body>
 
 <header>
-  <span class="icon">🌤</span>
-  <h1>Weather Chatbot</h1>
-  <p>Powered by Claude + OpenWeatherMap</p>
+  <h1><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 15" width="30" height="15" style="vertical-align:middle;border-radius:2px;flex-shrink:0"><rect width="30" height="7.5" fill="#EF3340"/><rect y="7.5" width="30" height="7.5" fill="#fff"/><circle cx="7" cy="3.75" r="3.3" fill="#fff"/><circle cx="8.6" cy="3.75" r="2.6" fill="#EF3340"/><text x="19" y="1.55" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="2.3" font-family="serif">★</text><text x="21.09" y="3.07" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="2.3" font-family="serif">★</text><text x="20.29" y="5.53" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="2.3" font-family="serif">★</text><text x="17.71" y="5.53" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="2.3" font-family="serif">★</text><text x="16.91" y="3.07" text-anchor="middle" dominant-baseline="middle" fill="#fff" font-size="2.3" font-family="serif">★</text></svg> SG <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" width="17" height="17" style="vertical-align:middle;flex-shrink:0"><rect width="18" height="18" rx="3.5" fill="rgba(255,255,255,0.92)"/><text x="9" y="13.5" text-anchor="middle" fill="#1a73e8" font-size="12.5" font-weight="800" font-family="Arial,Helvetica,sans-serif">P</text></svg> Carpark + <span class="weather-icon">🌤</span> Weather Chatbot</h1>
+  <div class="powered-text">
+    <img src="/static/claudecode-color.png" alt="Claude Code" />
+    Powered by Claude Code + OpenWeatherMap +
+  </div>
+  <div class="header-logos">
+    <img src="/static/lta-datamall.jpg" alt="LTA DataMall" class="lta-logo" />
+    +
+    <img src="/static/leaflet-logo.png" alt="Leaflet" class="leaflet-logo" />
+  </div>
 </header>
+
+<div id="author-credit">Author: Timothy Low</div>
 
 <div id="messages">
   <div class="welcome">
-    <span class="hero">⛅</span>
-    <h2>Ask me about the weather anywhere</h2>
-    <p>Try: "What's the weather in Tokyo?" or "Is it warm in Barcelona?"</p>
+    <div class="hero"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56" width="54" height="54" style="flex-shrink:0"><rect width="56" height="56" rx="10" fill="#c8cdd5"/><text x="28" y="43" text-anchor="middle" fill="#8d939c" font-size="38" font-weight="800" font-family="Arial,Helvetica,sans-serif">P</text></svg><span>🌤</span></div>
+    <h2>SG Carpark + Weather Chatbot</h2>
+    <p>Here's what I can help you with:</p>
+    <div class="welcome-cards">
+      <div class="welcome-card">
+        <strong>🌦 Weather — anywhere in the world</strong>
+        Use a slash command for instant weather data, or ask naturally.<br>
+        <code>/weather Tokyo</code> &nbsp;— current weather in Tokyo<br>
+        <code>/weather New York</code> — current weather in New York<br>
+        <em>"What's the weather in Barcelona?"</em>
+      </div>
+      <div class="welcome-card">
+        <strong>🅿️ Nearby carparks — Singapore</strong>
+        Use a slash command for instant real-time lot availability.<br>
+        <code>/carparks 5</code> &nbsp;— find the 5 nearest carparks<br>
+        <code>/carparks 10</code> — find the 10 nearest carparks
+        <div class="hint">Requires browser location permission to be granted. <span id="carpark-limit-hint">Maximum 20 results per query.</span></div>
+      </div>
+    </div>
   </div>
 </div>
 
 <div id="input-area">
-  <textarea id="user-input" placeholder="Ask about the weather in any city…" rows="1"></textarea>
+  <div id="slash-menu"></div>
+  <textarea id="user-input" placeholder="Ask about weather, or type /weather Tokyo · /carparks 5 for carparks…" rows="1"></textarea>
   <button id="send-btn" title="Send">&#9658;</button>
 </div>
 
@@ -201,6 +476,327 @@
   const sendBtn    = document.getElementById('send-btn');
 
   const conversationHistory = [];
+
+  // Runtime config fetched from the server (MAX_CARPARKS env var)
+  let maxCarparks = 20; // conservative default until /config responds
+
+  fetch('/config')
+    .then(r => r.json())
+    .then(cfg => {
+      maxCarparks = cfg.max_carparks ?? maxCarparks;
+      // Update welcome card hint with the actual server-side cap
+      const hintEl = document.getElementById('carpark-limit-hint');
+      if (hintEl) hintEl.textContent = `Maximum ${maxCarparks} results per query.`;
+    })
+    .catch(() => {}); // silently keep the default
+
+  // Request geolocation once on load; stored for every subsequent request
+  let userCoords = null;
+  if ('geolocation' in navigator) {
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        userCoords = { lat: coords.latitude, lon: coords.longitude };
+        inputEl.placeholder = 'Ask about weather, or type /weather Tokyo · /carparks 5 for carparks…';
+      },
+      () => { userCoords = null; } // denied or unavailable — silently ignore
+    );
+  }
+
+  function renderWeatherCard(data) {
+    removeWelcome();
+    clearTransient();
+
+    const card = document.createElement('div');
+    card.className = 'weather-card';
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' });
+    const timeStr = now.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+    const locationEl = document.createElement('div');
+    locationEl.className = 'wc-location';
+    locationEl.textContent = `${data.city}${data.country ? ', ' + data.country : ''} — ${dateStr} ${timeStr}`;
+    card.appendChild(locationEl);
+
+    const mainEl = document.createElement('div');
+    mainEl.className = 'wc-main';
+
+    const iconEl = document.createElement('img');
+    iconEl.className = 'wc-icon';
+    iconEl.src = `https://openweathermap.org/img/wn/${data.icon}@2x.png`;
+    iconEl.alt = data.description;
+    mainEl.appendChild(iconEl);
+
+    const tempWrap = document.createElement('div');
+    const tempEl = document.createElement('div');
+    tempEl.className = 'wc-temp';
+    tempEl.textContent = `${Math.round(data.temp)}°C`;
+    const descEl = document.createElement('div');
+    descEl.className = 'wc-desc';
+    descEl.textContent = data.description;
+    tempWrap.appendChild(tempEl);
+    tempWrap.appendChild(descEl);
+    mainEl.appendChild(tempWrap);
+    card.appendChild(mainEl);
+
+    const grid = document.createElement('div');
+    grid.className = 'wc-grid';
+    [
+      { label: 'Feels Like', value: `${Math.round(data.feels_like)}°C` },
+      { label: 'Humidity',   value: `${data.humidity}%` },
+      { label: 'Wind',       value: `${data.wind_speed} m/s` },
+    ].forEach(({ label, value }) => {
+      const stat = document.createElement('div');
+      stat.className = 'wc-stat';
+      stat.innerHTML = `<div class="wc-stat-label">${label}</div><div class="wc-stat-value">${value}</div>`;
+      grid.appendChild(stat);
+    });
+    card.appendChild(grid);
+
+    const mapsLink = document.createElement('a');
+    mapsLink.className = 'wc-maps-link';
+    mapsLink.href = `https://www.google.com/maps?q=${data.lat},${data.lon}`;
+    mapsLink.target = '_blank';
+    mapsLink.rel = 'noopener noreferrer';
+    mapsLink.textContent = '📍 View on Google Maps';
+    card.appendChild(mapsLink);
+
+    messagesEl.appendChild(card);
+    scrollBottom();
+  }
+
+  async function handleWeatherCommand(location) {
+    removeWelcome();
+    inputEl.value = '';
+    inputEl.style.height = '42px';
+    setInputEnabled(false);
+    addBubble(`/weather ${location}`, 'user');
+    const typingEl = addTyping();
+
+    try {
+      const res = await fetch('/weather', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ city: location }),
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json();
+      if (typingEl.parentNode) typingEl.remove();
+
+      if (data.error) {
+        addBubble(data.error, 'error');
+      } else {
+        renderWeatherCard(data);
+      }
+    } catch (err) {
+      if (typingEl.parentNode) typingEl.remove();
+      addBubble(`Connection error: ${err.message}`, 'error');
+    }
+    setInputEnabled(true);
+  }
+
+  function renderCarparkMap(carparks, tableScrollEl) {
+    const mapWrap = document.createElement('div');
+    mapWrap.className = 'carpark-map-wrap';
+    const mapEl = document.createElement('div');
+    const mapId = 'cp-map-' + Date.now();
+    mapEl.id = mapId;
+    mapEl.style.height = '100%';
+    mapWrap.appendChild(mapEl);
+    messagesEl.appendChild(mapWrap);
+
+    // Initialise after the element is in the DOM
+    requestAnimationFrame(() => {
+      const map = L.map(mapId, { zoomControl: true });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19,
+      }).addTo(map);
+
+      const bounds = [];
+
+      // User location — blue pulsing circle marker
+      if (userCoords) {
+        const userIcon = L.divIcon({
+          className: '',
+          html: '<div style="width:14px;height:14px;background:#1a73e8;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 3px rgba(26,115,232,.35)"></div>',
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
+        });
+        L.marker([userCoords.lat, userCoords.lon], { icon: userIcon })
+          .addTo(map)
+          .bindPopup('<b>Your location</b>');
+        bounds.push([userCoords.lat, userCoords.lon]);
+      }
+
+      // Carpark markers — numbered pins, red if full, blue if available
+      carparks.forEach((cp, i) => {
+        const full = cp.available_lots === 0;
+        const bg   = full ? '#c5221f' : '#1a73e8';
+        const pin  = L.divIcon({
+          className: '',
+          html: `<div style="width:28px;height:28px;background:${bg};color:#fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center"><span style="transform:rotate(45deg);font-weight:700;font-size:11px">${i + 1}</span></div>`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 28],
+          popupAnchor: [0, -28],
+        });
+        const lotsHtml = full
+          ? '<span style="color:#c5221f;font-weight:600">Full</span>'
+          : `<span style="color:#1a73e8;font-weight:600">${cp.available_lots} lots available</span>`;
+        L.marker([cp.lat, cp.lon], { icon: pin })
+          .addTo(map)
+          .bindPopup(
+            `<b>${i + 1}. ${cp.development || cp.carpark_id}</b><br>${lotsHtml}<br>${cp.distance_km} km away<br>` +
+            `<a href="https://www.google.com/maps?q=${cp.lat},${cp.lon}" target="_blank" rel="noopener noreferrer" style="color:#1a73e8">Open in Google Maps</a>`
+          )
+          .on('click', () => {
+            if (!tableScrollEl) return;
+            tableScrollEl.querySelectorAll('tr.row-highlighted').forEach(r => r.classList.remove('row-highlighted'));
+            const row = tableScrollEl.querySelector(`tr[data-carpark-idx="${i}"]`);
+            if (!row) return;
+            row.classList.add('row-highlighted');
+
+            // Scroll only the table's own container (not the page) to centre the row.
+            // getBoundingClientRect gives positions relative to the current viewport,
+            // so we convert that to an absolute offset within the scroll container.
+            const rowRect       = row.getBoundingClientRect();
+            const containerRect = tableScrollEl.getBoundingClientRect();
+            const absTop = rowRect.top - containerRect.top + tableScrollEl.scrollTop;
+            tableScrollEl.scrollTop = Math.max(
+              0,
+              absTop - tableScrollEl.clientHeight / 2 + row.offsetHeight / 2
+            );
+
+            // Then scroll #messages so the table header is visible at the top.
+            const tableWrap = tableScrollEl.closest('.carpark-table-wrap');
+            if (tableWrap) tableWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          });
+        bounds.push([cp.lat, cp.lon]);
+      });
+
+      if (bounds.length) map.fitBounds(bounds, { padding: [30, 30] });
+    });
+  }
+
+  function _carparkRate(agency) {
+    // HDB short-term parking: standard published rate (same weekday & weekend for most carparks)
+    if (agency === 'HDB') return { weekday: '$0.60 / 30 min', weekend: '$0.60 / 30 min' };
+    // URA and LTA rates vary significantly by location — no single figure applies
+    return { weekday: 'Varies', weekend: 'Varies' };
+  }
+
+  async function handleCarparkCommand(limit) {
+    if (!userCoords) {
+      addBubble('Location access is required for carpark queries. Please allow location permission in your browser and reload the page.', 'error');
+      return;
+    }
+    removeWelcome();
+    inputEl.value = '';
+    inputEl.style.height = '42px';
+    setInputEnabled(false);
+    addBubble(`/carparks ${limit}`, 'user');
+    const typingEl = addTyping();
+
+    try {
+      const res = await fetch('/carparks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location: userCoords, limit }),
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const { carparks, requested } = await res.json();
+      if (typingEl.parentNode) typingEl.remove();
+
+      if (!carparks || carparks.length === 0) {
+        addBubble('No carparks found near your current location. Try asking with a larger radius.', 'assistant');
+      } else {
+        renderCarparkTable(carparks, requested);
+      }
+    } catch (err) {
+      if (typingEl.parentNode) typingEl.remove();
+      addBubble(`Connection error: ${err.message}`, 'error');
+    }
+    setInputEnabled(true);
+  }
+
+  function renderCarparkTable(carparks, requestedCount = null) {
+    removeWelcome();
+    clearTransient();
+
+    // Prefix text bubble — partial-results warning or standard header
+    const now = new Date();
+    const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+    const dateStr = now.toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' });
+    const timeStr = now.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const prefixEl = document.createElement('div');
+    prefixEl.className = 'bubble assistant';
+    if (requestedCount !== null && carparks.length < requestedCount) {
+      const noun = carparks.length === 1 ? 'carpark' : 'carparks';
+      prefixEl.textContent = `Sorry, I am only able to find ${carparks.length} ${noun} which ${carparks.length === 1 ? 'is' : 'are'} close to your current location:`;
+    } else {
+      prefixEl.textContent = `Here are the ${carparks.length} nearest carparks to your current location at ${dateStr} ${timeStr}:`;
+    }
+    messagesEl.appendChild(prefixEl);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'carpark-table-wrap';
+    const scrollDiv = document.createElement('div');
+    scrollDiv.className = 'carpark-table-scroll';
+    scrollDiv.style.maxHeight = '530px';
+
+    const table = document.createElement('table');
+    table.className = 'carpark-table';
+
+    const thead = table.createTHead();
+    const hRow = thead.insertRow();
+    [
+      { text: 'No' },
+      { text: 'Carpark ID' },
+      { text: 'Development' },
+      { text: 'Weekday Rate', active: !isWeekend },
+      { text: 'Weekend Rate', active: isWeekend },
+      { text: 'Distance' },
+      { text: 'Available Lots' },
+    ].forEach(({ text, active }) => {
+      const th = document.createElement('th');
+      th.textContent = text;
+      if (active) th.className = 'rate-active-hdr';
+      hRow.appendChild(th);
+    });
+
+    const tbody = table.createTBody();
+    carparks.forEach((cp, i) => {
+      const row = tbody.insertRow();
+      row.dataset.carparkIdx = i;
+
+      row.insertCell().textContent = i + 1;
+      row.insertCell().textContent = cp.carpark_id || '—';
+      row.insertCell().textContent = cp.development || '—';
+
+      const rates = _carparkRate(cp.agency);
+
+      const wdCell = row.insertCell();
+      wdCell.textContent = rates.weekday;
+      wdCell.className = isWeekend ? 'rate-inactive' : 'rate-active';
+
+      const weCell = row.insertCell();
+      weCell.textContent = rates.weekend;
+      weCell.className = isWeekend ? 'rate-active' : 'rate-inactive';
+
+      row.insertCell().textContent = `${cp.distance_km} km`;
+
+      const lotsCell = row.insertCell();
+      const lots = cp.available_lots;
+      lotsCell.textContent = lots === 0 ? '0 (Full)' : lots;
+      lotsCell.className = lots === 0 ? 'lots-full' : 'lots-available';
+    });
+
+    scrollDiv.appendChild(table);
+    wrap.appendChild(scrollDiv);
+    messagesEl.appendChild(wrap);
+    renderCarparkMap(carparks, scrollDiv);
+    scrollBottom();
+  }
 
   function removeWelcome() {
     const w = messagesEl.querySelector('.welcome');
@@ -254,6 +850,25 @@
     const text = inputEl.value.trim();
     if (!text) return;
 
+    // Intercept /carpark(s) N slash command — bypass the LLM entirely
+    const carparkCmd = text.match(/^\/carparks?\s+(\d+)$/i);
+    if (carparkCmd) {
+      let limit = parseInt(carparkCmd[1], 10);
+      if (limit > maxCarparks) {
+        limit = maxCarparks;
+        addBubble(`Note: results are capped at ${maxCarparks}. Showing the ${maxCarparks} nearest carparks.`, 'assistant');
+      }
+      await handleCarparkCommand(limit);
+      return;
+    }
+
+    // Intercept /weather [location] slash command — bypass the LLM entirely
+    const weatherCmd = text.match(/^\/weather\s+(.+)$/i);
+    if (weatherCmd) {
+      await handleWeatherCommand(weatherCmd[1].trim());
+      return;
+    }
+
     inputEl.value = '';
     inputEl.style.height = '42px';
     setInputEnabled(false);
@@ -262,12 +877,13 @@
     const typingEl = addTyping();
 
     let assistantBubble = null;
+    let carparkTableRendered = false;
 
     try {
       const res = await fetch('/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, history: conversationHistory }),
+        body: JSON.stringify({ message: text, history: conversationHistory, location: userCoords }),
       });
 
       if (!res.ok) throw new Error(`Server error ${res.status}`);
@@ -293,9 +909,16 @@
           try { msg = JSON.parse(raw); } catch { continue; }
 
           if (msg.type === 'status') {
-            typingEl.remove();           // remove typing dots on first event
+            if (typingEl.parentNode) typingEl.remove(); // remove typing dots on first event
             addStatus(msg.text);
+          } else if (msg.type === 'carpark_table') {
+            if (typingEl.parentNode) typingEl.remove();
+            renderCarparkTable(msg.carparks);
+            carparkTableRendered = true;
           } else if (msg.type === 'response') {
+            // Suppress the text summary when a carpark table was already rendered —
+            // the table is the response; the text bubble would just scroll it out of view.
+            if (carparkTableRendered) continue;
             clearTransient();
             if (!assistantBubble) {
               assistantBubble = addBubble('', 'assistant');
@@ -309,11 +932,11 @@
         }
       }
 
-      // Fallback: if no response bubble was created
-      if (!assistantBubble) {
+      // Fallback: if no response bubble and no carpark table, something went wrong
+      if (!assistantBubble && !carparkTableRendered) {
         clearTransient();
         addBubble('Sorry, I did not receive a response. Please try again.', 'error');
-      } else {
+      } else if (assistantBubble) {
         conversationHistory.push({ role: 'user', content: text });
         conversationHistory.push({ role: 'assistant', content: assistantBubble.textContent });
       }
@@ -326,14 +949,84 @@
     setInputEnabled(true);
   }
 
+  // ── Slash-command autocomplete ──
+  const slashMenuEl = document.getElementById('slash-menu');
+  const SLASH_COMMANDS = [
+    { cmd: '/weather',  fill: '/weather ',  desc: 'Current weather — e.g. /weather Tokyo' },
+    { cmd: '/carparks', fill: '/carparks ', desc: 'Nearest carparks — e.g. /carparks 5'  },
+  ];
+  let slashActive = -1;
+
+  function renderSlashMenu(matches) {
+    slashMenuEl.innerHTML = '';
+    slashActive = -1;
+    matches.forEach(c => {
+      const item = document.createElement('div');
+      item.className = 'slash-item';
+      item.innerHTML = `<span class="slash-cmd">${c.cmd}</span><span class="slash-desc">${c.desc}</span>`;
+      item.addEventListener('mousedown', e => {
+        e.preventDefault(); // keep focus on textarea
+        inputEl.value = c.fill;
+        hideSlashMenu();
+        inputEl.focus();
+      });
+      slashMenuEl.appendChild(item);
+    });
+    slashMenuEl.style.display = 'block';
+  }
+
+  function hideSlashMenu() {
+    slashMenuEl.style.display = 'none';
+    slashActive = -1;
+  }
+
+  function updateSlashMenu(val) {
+    const trimmed = val.trim();
+    // Only show while user is typing the command name (no space yet)
+    if (!trimmed.startsWith('/') || trimmed.includes(' ')) { hideSlashMenu(); return; }
+    const lower   = trimmed.toLowerCase();
+    const matches = SLASH_COMMANDS.filter(c => c.cmd.startsWith(lower));
+    if (!matches.length) { hideSlashMenu(); return; }
+    renderSlashMenu(matches);
+  }
+
   // Auto-grow textarea
   inputEl.addEventListener('input', () => {
     inputEl.style.height = '42px';
     inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+    updateSlashMenu(inputEl.value);
+  });
+
+  inputEl.addEventListener('blur', () => {
+    // Delay so mousedown on a menu item fires first
+    setTimeout(hideSlashMenu, 150);
   });
 
   // Enter to send (Shift+Enter = newline)
   inputEl.addEventListener('keydown', e => {
+    if (slashMenuEl.style.display !== 'none') {
+      const items = Array.from(slashMenuEl.querySelectorAll('.slash-item'));
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        slashActive = Math.min(slashActive + 1, items.length - 1);
+        items.forEach((el, i) => el.classList.toggle('active', i === slashActive));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        slashActive = Math.max(slashActive - 1, 0);
+        items.forEach((el, i) => el.classList.toggle('active', i === slashActive));
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && slashActive >= 0)) {
+        e.preventDefault();
+        const idx = slashActive >= 0 ? slashActive : 0;
+        inputEl.value = SLASH_COMMANDS.filter(c => c.cmd.startsWith(inputEl.value.trim().toLowerCase()))[idx]?.fill ?? inputEl.value;
+        hideSlashMenu();
+        return;
+      }
+      if (e.key === 'Escape') { e.preventDefault(); hideSlashMenu(); return; }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();

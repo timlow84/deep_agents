@@ -22,6 +22,7 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "WARNING").upper())
 from agents.main_agent import build_main_agent  # noqa: E402
 from agents.weather_agent import (build_weather_subagent,  # noqa: E402
                                   get_weather_mcp_config)
+from agents.sg_carpark_agent import get_sg_carpark_mcp_config  # noqa: E402
 
 _STATIC = os.path.join(os.path.dirname(__file__), "static")
 
@@ -30,14 +31,22 @@ _STATIC = os.path.join(os.path.dirname(__file__), "static")
 async def lifespan(app: FastAPI):
     from langchain_mcp_adapters.client import MultiServerMCPClient
 
-    client = MultiServerMCPClient(get_weather_mcp_config())
+    mcp_config = {**get_weather_mcp_config(), **get_sg_carpark_mcp_config()}
+    client = MultiServerMCPClient(mcp_config)
     tools = await client.get_tools()
-    weather_subagent = build_weather_subagent(tools)
-    app.state.graph = build_main_agent(weather_subagent, tools=tools)
+
+    weather_tools = [t for t in tools if t.name in ("geocode_city", "get_current_weather")]
+    carpark_tools = [t for t in tools if t.name in ("get_nearby_carparks",)]
+
+    weather_subagent = build_weather_subagent(weather_tools)
+    # carpark tool is wired directly into the orchestrator (not as a sub-agent) so that
+    # on_tool_end fires at the top-level event stream and chat.py can emit carpark_table events
+
+    app.state.graph = build_main_agent(weather_subagent, carpark_tools=carpark_tools, tools=tools)
     yield
 
 
-app = FastAPI(title="Weather Chatbot", lifespan=lifespan)
+app = FastAPI(title="SG Carpark + Weather Chatbot", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 
 from app.chat import router  # noqa: E402
