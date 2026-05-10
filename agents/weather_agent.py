@@ -11,11 +11,14 @@ from agents.llm_factory import get_anthropic_llm  # explicit Anthropic
 # from agents.llm_factory import get_nvidia_llm   # switch to NVIDIA NIM (build.nvidia.com)
 
 WEATHER_AGENT_PROMPT = (
-    "You are a weather agent with two tools: geocode_city and get_current_weather. "
+    "You are a weather agent with three tools: geocode_city, get_current_weather, and get_5day_forecast. "
     "You MUST always use tools — never answer from memory. "
     "Step 1: call geocode_city with the city name to get latitude and longitude. "
-    "Step 2: call get_current_weather with those coordinates. "
-    "Step 3: report the temperature, conditions, humidity, wind speed, and feels-like temperature."
+    "Step 2a: if the user asks about current weather, call get_current_weather with those coordinates "
+    "and report the temperature, conditions, humidity, wind speed, and feels-like temperature. "
+    "Step 2b: if the user asks about a forecast or future weather (e.g. 'next 5 days', 'this week', "
+    "'will it rain'), call get_5day_forecast with those coordinates and summarise each day's "
+    "high/low temperature and conditions."
 )
 
 _MCP_SERVER = os.path.abspath(
@@ -45,9 +48,9 @@ def build_weather_subagent(tools: list, model_name: str | None = None) -> SubAge
     return {
         "name": "weather_agent",
         "description": (
-            "Fetches current weather conditions for any city worldwide using OpenWeatherMap. "
-            "Use this agent when the user asks about current weather, temperature, humidity, "
-            "wind speed, or conditions in any location."
+            "Fetches current weather and 5-day forecasts for any city worldwide using OpenWeatherMap. "
+            "Use this agent when the user asks about current weather, temperature, humidity, wind speed, "
+            "conditions, or future weather (forecast, next N days, will it rain, this week, etc.)."
         ),
         "system_prompt": WEATHER_AGENT_PROMPT,
         "tools": tools,

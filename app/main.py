@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     client = MultiServerMCPClient(mcp_config)
     tools = await client.get_tools()
 
-    weather_tools = [t for t in tools if t.name in ("geocode_city", "get_current_weather")]
+    weather_tools = [t for t in tools if t.name in ("geocode_city", "get_current_weather", "get_5day_forecast")]
     carpark_tools = [t for t in tools if t.name in ("get_nearby_carparks",)]
 
     weather_subagent = build_weather_subagent(weather_tools)

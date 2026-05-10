@@ -8,6 +8,7 @@ import uuid
 log = logging.getLogger(__name__)
 
 MAX_CARPARKS = int(os.getenv("MAX_CARPARKS", "20"))
+RECURSION_LIMIT = int(os.getenv("RECURSION_LIMIT", "25"))
 
 import langfuse as _langfuse_module
 from fastapi import APIRouter, Request
@@ -28,6 +29,11 @@ class CarparksRequest(BaseModel):
 
 class WeatherRequest(BaseModel):
     city: str
+
+
+class WeatherCoordsRequest(BaseModel):
+    lat: float
+    lon: float
 
 
 @router.get("/config")
@@ -54,6 +60,7 @@ async def weather_direct(req: WeatherRequest):
     from tools.weather_mcp_server import (  # noqa: PLC0415
         _geocode_city_impl,
         _get_current_weather_impl,
+        _get_forecast_impl,
     )
 
     geo = await _geocode_city_impl(req.city)
@@ -61,6 +68,7 @@ async def weather_direct(req: WeatherRequest):
         return {"error": f"Could not find location: {req.city}"}
     match = geo[0]
     weather = await _get_current_weather_impl(match["lat"], match["lon"], units="metric")
+    forecast = await _get_forecast_impl(match["lat"], match["lon"], units="metric")
     return {
         "city": match.get("name", req.city),
         "country": match.get("country", ""),
@@ -72,6 +80,29 @@ async def weather_direct(req: WeatherRequest):
         "wind_speed": weather["wind"]["speed"],
         "description": weather["weather"][0]["description"],
         "icon": weather["weather"][0]["icon"],
+        "forecast": forecast,
+    }
+
+
+@router.post("/weather/by-coords")
+async def weather_by_coords(req: WeatherCoordsRequest):
+    """Direct weather lookup by lat/lon — used when /weather is typed with no city."""
+    from tools.weather_mcp_server import _get_current_weather_impl, _get_forecast_impl  # noqa: PLC0415
+
+    weather = await _get_current_weather_impl(req.lat, req.lon, units="metric")
+    forecast = await _get_forecast_impl(req.lat, req.lon, units="metric")
+    return {
+        "city": weather.get("name", "Current Location"),
+        "country": weather.get("sys", {}).get("country", ""),
+        "lat": req.lat,
+        "lon": req.lon,
+        "temp": weather["main"]["temp"],
+        "feels_like": weather["main"]["feels_like"],
+        "humidity": weather["main"]["humidity"],
+        "wind_speed": weather["wind"]["speed"],
+        "description": weather["weather"][0]["description"],
+        "icon": weather["weather"][0]["icon"],
+        "forecast": forecast,
     }
 
 
@@ -133,7 +164,10 @@ async def chat(req: ChatRequest, request: Request):
             with propagate_attributes(session_id=session_id, trace_name=req.message[:120]):
                 async for event in graph.astream_events(
                     {"messages": messages},
-                    config={"callbacks": [langfuse], "recursion_limit": 10},
+                    # Higher limit needed for multi-step chains: each tool call + model response
+                    # costs ~2 steps, and non-Anthropic models (NVIDIA, Ollama) often require
+                    # more intermediate steps before emitting a final tool call or answer.
+                    config={"callbacks": [langfuse], "recursion_limit": RECURSION_LIMIT},
                     version="v2",
                 ):
                     etype = event["event"]

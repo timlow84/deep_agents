@@ -184,7 +184,7 @@
     /* ── Weather card ── */
     .weather-card {
       align-self: flex-start;
-      width: min(100%, 400px);
+      width: min(100%, 460px);
       background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
       color: #fff;
       border-radius: 18px;
@@ -240,6 +240,34 @@
       text-decoration: none;
     }
     .weather-card .wc-maps-link:hover { color: #fff; }
+    .weather-card .wc-forecast {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+      margin-top: 10px;
+      border-top: 1px solid rgba(255,255,255,.25);
+      padding-top: 10px;
+    }
+    .weather-card .wc-forecast-day {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1px;
+    }
+    .weather-card .wc-fday-name {
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .2px;
+    }
+    .weather-card .wc-fday-icon { width: 40px; height: 40px; }
+    .weather-card .wc-fday-temps {
+      display: flex;
+      gap: 5px;
+      font-size: .78rem;
+      line-height: 1.3;
+    }
+    .weather-card .wc-fday-hi { font-weight: 700; }
+    .weather-card .wc-fday-lo { opacity: .65; }
 
     /* ── Carpark table ── */
     .carpark-table-wrap {
@@ -553,6 +581,30 @@
     });
     card.appendChild(grid);
 
+    if (data.forecast && data.forecast.length > 0) {
+      const forecastEl = document.createElement('div');
+      forecastEl.className = 'wc-forecast';
+      data.forecast.forEach(day => {
+        const dayEl = document.createElement('div');
+        dayEl.className = 'wc-forecast-day';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'wc-fday-name';
+        nameEl.textContent = day.day;
+        const iconEl = document.createElement('img');
+        iconEl.className = 'wc-fday-icon';
+        iconEl.src = `https://openweathermap.org/img/wn/${day.icon}.png`;
+        iconEl.alt = day.description;
+        const tempsEl = document.createElement('div');
+        tempsEl.className = 'wc-fday-temps';
+        tempsEl.innerHTML = `<span class="wc-fday-hi">${Math.round(day.temp_max)}°</span><span class="wc-fday-lo">${Math.round(day.temp_min)}°</span>`;
+        dayEl.appendChild(nameEl);
+        dayEl.appendChild(iconEl);
+        dayEl.appendChild(tempsEl);
+        forecastEl.appendChild(dayEl);
+      });
+      card.appendChild(forecastEl);
+    }
+
     const mapsLink = document.createElement('a');
     mapsLink.className = 'wc-maps-link';
     mapsLink.href = `https://www.google.com/maps?q=${data.lat},${data.lon}`;
@@ -586,6 +638,38 @@
       if (data.error) {
         addBubble(data.error, 'error');
       } else {
+        renderWeatherCard(data);
+      }
+    } catch (err) {
+      if (typingEl.parentNode) typingEl.remove();
+      addBubble(`Connection error: ${err.message}`, 'error');
+    }
+    setInputEnabled(true);
+  }
+
+  async function handleWeatherByCoords(coords) {
+    removeWelcome();
+    inputEl.value = '';
+    inputEl.style.height = '42px';
+    setInputEnabled(false);
+    addBubble('/weather', 'user');
+    const typingEl = addTyping();
+
+    try {
+      const res = await fetch('/weather/by-coords', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat: coords.lat, lon: coords.lon }),
+      });
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json();
+      if (typingEl.parentNode) typingEl.remove();
+
+      if (data.error) {
+        addBubble(data.error, 'error');
+      } else {
+        const locationName = data.city + (data.country ? `, ${data.country}` : '');
+        addBubble(`Using current location: ${locationName}`, 'assistant');
         renderWeatherCard(data);
       }
     } catch (err) {
@@ -862,6 +946,17 @@
       return;
     }
 
+    // Intercept bare /weather — use current geolocation if available
+    if (/^\/weather\s*$/i.test(text)) {
+      if (!userCoords) {
+        addBubble('Please specify a city, e.g. /weather Tokyo, or allow location access for weather at your current location.', 'error');
+        inputEl.value = '';
+        return;
+      }
+      await handleWeatherByCoords(userCoords);
+      return;
+    }
+
     // Intercept /weather [location] slash command — bypass the LLM entirely
     const weatherCmd = text.match(/^\/weather\s+(.+)$/i);
     if (weatherCmd) {
@@ -878,6 +973,7 @@
 
     let assistantBubble = null;
     let carparkTableRendered = false;
+    let errorReceived = false;
 
     try {
       const res = await fetch('/chat', {
@@ -928,12 +1024,13 @@
           } else if (msg.type === 'error') {
             clearTransient();
             addBubble(`Error: ${msg.text}`, 'error');
+            errorReceived = true;
           }
         }
       }
 
-      // Fallback: if no response bubble and no carpark table, something went wrong
-      if (!assistantBubble && !carparkTableRendered) {
+      // Fallback: if no response bubble, no carpark table, and no error was already shown
+      if (!assistantBubble && !carparkTableRendered && !errorReceived) {
         clearTransient();
         addBubble('Sorry, I did not receive a response. Please try again.', 'error');
       } else if (assistantBubble) {
