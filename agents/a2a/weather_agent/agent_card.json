@@ -1,0 +1,36 @@
+{
+  "$schema": "https://a2a-protocol.org/schema/agent-card.json",
+  "name": "Weather Agent",
+  "description": "Provides real-time weather and 5-day forecasts for any city worldwide using the OpenWeatherMap API.",
+  "version": "1.0.0",
+  "url": "http://localhost:9001",
+  "defaultInputModes": ["text/plain"],
+  "defaultOutputModes": ["text/plain"],
+  "capabilities": {
+    "streaming": true
+  },
+  "skills": [
+    {
+      "id": "current_weather",
+      "name": "Current Weather",
+      "description": "Get real-time temperature, humidity, wind speed, feels-like temperature, and conditions for any city worldwide.",
+      "tags": ["weather", "current", "temperature", "humidity", "wind"],
+      "examples": [
+        "What is the weather in Singapore?",
+        "How hot is it in Tokyo right now?",
+        "What are the current conditions in New York?"
+      ]
+    },
+    {
+      "id": "weather_forecast",
+      "name": "5-Day Weather Forecast",
+      "description": "Get a 5-day daily forecast with high/low temperatures and conditions for any city worldwide.",
+      "tags": ["weather", "forecast", "5-day", "future", "rain", "temperature"],
+      "examples": [
+        "What is the weather forecast for London this week?",
+        "Will it rain in Paris over the next 5 days?",
+        "What will the weather be like in Sydney next week?"
+      ]
+    }
+  ]
+}

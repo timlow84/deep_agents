@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "LangGraph deep agents workspace"
 requires-python = ">=3.14"
 dependencies = [
+    "a2a-sdk>=0.2.5",
     "black>=26.3.1",
     "deepagents>=0.5.7",
     "fastapi>=0.115.0",
