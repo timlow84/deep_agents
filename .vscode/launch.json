@@ -30,13 +30,31 @@
       "envFile": "${workspaceFolder}/.env"
     },
     {
-      "name": "Current File",
+      "name": "A2A Weather Agent",
       "type": "debugpy",
       "request": "launch",
-      "program": "${file}",
+      "program": "${workspaceFolder}/agents/a2a/weather_agent/a2a_weather_agent.py",
       "console": "integratedTerminal",
       "justMyCode": false,
       "envFile": "${workspaceFolder}/.env"
+    },
+    {
+      "name": "A2A Orchestrator Agent",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/agents/a2a/orchestrator_agent/a2a_orchestrator_agent.py",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "envFile": "${workspaceFolder}/.env"
+    },
+  ],
+  "compounds": [
+    {
+      "name": "A2A Agents (Weather + Orchestrator)",
+      "configurations": ["A2A Weather Agent", "A2A Orchestrator Agent"],
+      "presentation": {
+        "order": ["A2A Weather Agent", "A2A Orchestrator Agent"]
+      }
     }
   ]
 }

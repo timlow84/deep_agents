@@ -58,7 +58,8 @@ from tools.weather_mcp_server import (  # noqa: E402
     _get_forecast_impl,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+LOG_FORMAT = os.getenv("LOG_FORMAT", "%(levelname)s %(name)s: %(message)s")
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(), format=LOG_FORMAT)
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -169,6 +170,7 @@ class WeatherAgentExecutor(AgentExecutor):
         )
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
+        assert context.message is not None
         task = context.current_task or new_task_from_user_message(context.message)
         await event_queue.enqueue_event(task)
 

@@ -21,12 +21,13 @@ import uuid
 import httpx
 import langfuse as _langfuse_module
 from a2a.client import ClientConfig, create_client
-from a2a.types.a2a_pb2 import ROLE_USER, Message, Part, SendMessageRequest
+from a2a.types import Message, Part, Role, SendMessageRequest
 from dotenv import load_dotenv
+from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langfuse import propagate_attributes
 from langfuse.langchain import CallbackHandler
-from langgraph.prebuilt import create_react_agent
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -68,7 +69,7 @@ async def _call_weather_a2a(query: str) -> str:
         request = SendMessageRequest(
             message=Message(
                 message_id=str(uuid.uuid4()),
-                role=ROLE_USER,
+                role=Role.ROLE_USER,
                 parts=[Part(text=query)],
             )
         )
@@ -117,10 +118,10 @@ async def weather_agent(query: str) -> str:
 
 def build_orchestrator():
     """Return a compiled LangGraph ReAct graph with the weather A2A tool."""
-    return create_react_agent(
+    return create_agent(
         model=get_llm(),
         tools=[weather_agent],
-        prompt=_SYSTEM_PROMPT,
+        system_prompt=_SYSTEM_PROMPT,
     )
 
 
@@ -144,11 +145,13 @@ async def main() -> None:
         if query.lower() in ("quit", "exit", "q"):
             break
 
+        # [Reference] -> https://langfuse.com/integrations/frameworks/langchain
         langfuse_cb = CallbackHandler()
         try:
+            # [Reference] -> https://langfuse.com/docs/observability/features/metadata
             with propagate_attributes(session_id=str(uuid.uuid4()), trace_name=query[:120]):
                 result = await graph.ainvoke(
-                    {"messages": [("user", query)]},
+                    {"messages": [HumanMessage(content=query)]},
                     config={"callbacks": [langfuse_cb]},
                 )
         finally:
