@@ -4,6 +4,9 @@ import json
 import logging
 import os
 import uuid
+from typing import Final
+
+AGENT_NAME: Final[str] = "main_agent"
 
 log = logging.getLogger(__name__)
 

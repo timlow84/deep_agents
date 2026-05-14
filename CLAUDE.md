@@ -43,7 +43,7 @@ This workspace demonstrates three agent patterns side by side, all sharing the s
 
 The web server uses the DeepAgent pattern. The startup sequence in `app/main.py` lifespan is:
 
-1. `MultiServerMCPClient(get_weather_mcp_config())` — spawns `tools/weather_mcp_server.py` as a subprocess via stdio
+1. `MultiServerMCPClient(get_weather_mcp_config())` — spawns `tools/mcp/weather_mcp_server.py` as a subprocess via stdio
 2. `await client.get_tools()` — discovers `geocode_city` and `get_current_weather` from the MCP server
 3. `build_weather_subagent(tools)` — packages those tools into a `SubAgent` TypedDict
 4. `build_main_agent(weather_subagent)` — calls `create_deep_agent(subagents=[weather_subagent])`, giving the orchestrator a built-in `task` tool it uses to delegate

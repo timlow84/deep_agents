@@ -1,0 +1,14 @@
+{
+  "key": "msg-001",
+  "value": {
+    "id": "msg-001",
+    "timestamp": "2026-05-14T12:00:00Z",
+    "type": "weather_query",
+    "query": "How is the weather in Singapore, Singapore?",
+    "location": {
+      "city": "Singapore",
+      "country": "Singapore"
+    }
+  },
+  "timestamp": 1778760000000
+}

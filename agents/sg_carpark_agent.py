@@ -2,6 +2,7 @@
 
 import os
 import sys
+from typing import Final
 
 from deepagents import SubAgent
 
@@ -9,6 +10,8 @@ from agents.llm_factory import get_llm            # selects provider via LLM_PRO
 from agents.llm_factory import get_anthropic_llm  # explicit Anthropic
 # from agents.llm_factory import get_openai_llm   # switch to local Ollama via Portkey
 # from agents.llm_factory import get_nvidia_llm   # switch to NVIDIA NIM (build.nvidia.com)
+
+AGENT_NAME: Final[str] = "sg_carpark_agent"
 
 CARPARK_AGENT_PROMPT = (
     "You are a Singapore carpark agent with one tool: get_nearby_carparks. "

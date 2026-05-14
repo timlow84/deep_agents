@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/sample_orchestrator_msg.schema.json",
+  "title": "Orchestrator Agent Input Message",
+  "description": "Schema for messages sent to the orchestrator agent via Kafka/Schema Registry.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique message identifier."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the message was created."
+    },
+    "type": {
+      "type": "string",
+      "description": "Type of message or intent being requested.",
+      "const": "weather_query"
+    },
+    "query": {
+      "type": "string",
+      "description": "User question or weather query text."
+    },
+    "location": {
+      "type": "object",
+      "description": "Location details for the weather query.",
+      "properties": {
+        "city": {
+          "type": "string",
+          "description": "City name."
+        },
+        "country": {
+          "type": "string",
+          "description": "Country name."
+        }
+      },
+      "required": ["city", "country"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["id", "timestamp", "type", "query", "location"],
+  "additionalProperties": false
+}

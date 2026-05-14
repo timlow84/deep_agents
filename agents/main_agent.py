@@ -1,6 +1,7 @@
 """Orchestrator main agent — uses deepagents with any tool-calling LLM provider."""
 
 import os
+from typing import Final
 
 from deepagents import SubAgent, create_deep_agent
 
@@ -8,6 +9,8 @@ from agents.llm_factory import get_anthropic_llm  # switch to Anthropic Claude -
 from agents.llm_factory import get_openai_llm     # switch to local Ollama via Portkey - DO NOT CHANGE THIS LINE
 from agents.llm_factory import get_nvidia_llm     # switch to NVIDIA NIM (build.nvidia.com) - DO NOT CHANGE THIS LINE
 from agents.llm_factory import get_llm            # selects provider via LLM_PROVIDER_SELECTOR env var
+
+AGENT_NAME: Final[str] = "main_agent"
 
 _MAX_CARPARKS = int(os.getenv("MAX_CARPARKS", "20"))
 

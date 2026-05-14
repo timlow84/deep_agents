@@ -2,7 +2,6 @@
 
 import math
 import os
-import sys
 
 import httpx
 import truststore
@@ -13,7 +12,7 @@ truststore.inject_into_ssl()
 
 # Load .env from the project root (two levels up from this file) so the server
 # works when spawned as a subprocess that doesn't inherit the parent's env.
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 mcp = FastMCP("SG Carparks")
 
@@ -35,9 +34,7 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlon = math.radians(lon2 - lon1)
     a = (
         math.sin(dlat / 2) ** 2
-        + math.cos(math.radians(lat1))
-        * math.cos(math.radians(lat2))
-        * math.sin(dlon / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
     )
     return R * 2 * math.asin(math.sqrt(a))
 
@@ -84,17 +81,19 @@ async def _find_nearby_carparks(
             continue
         distance = _haversine_km(lat, lon, cp_lat, cp_lon)
         if distance <= radius_km:
-            nearby.append({
-                "carpark_id": cp.get("CarParkID"),
-                "development": cp.get("Development"),
-                "area": cp.get("Area"),
-                "lat": cp_lat,
-                "lon": cp_lon,
-                "available_lots": cp.get("AvailableLots"),
-                "lot_type": cp.get("LotType"),
-                "agency": cp.get("Agency"),
-                "distance_km": round(distance, 3),
-            })
+            nearby.append(
+                {
+                    "carpark_id": cp.get("CarParkID"),
+                    "development": cp.get("Development"),
+                    "area": cp.get("Area"),
+                    "lat": cp_lat,
+                    "lon": cp_lon,
+                    "available_lots": cp.get("AvailableLots"),
+                    "lot_type": cp.get("LotType"),
+                    "agency": cp.get("Agency"),
+                    "distance_km": round(distance, 3),
+                }
+            )
 
     nearby.sort(key=lambda x: x["distance_km"])
     return nearby[:limit]
