@@ -289,7 +289,12 @@ class OrchestratorAgentExecutor(AgentExecutor):
         langfuse_cb = CallbackHandler()
         session_id = context.task_id or str(uuid.uuid4())
         try:
-            with propagate_attributes(session_id=session_id, trace_name=user_text[:120]):
+            # with propagate_attributes(session_id=session_id, trace_name=user_text[:120]):
+            #     result = await self._graph.ainvoke(
+            #         {"messages": [HumanMessage(content=user_text)]},
+            #         config={"callbacks": [langfuse_cb]},
+            #     )
+            with propagate_attributes(session_id=session_id, trace_name=AGENT_NAME):
                 result = await self._graph.ainvoke(
                     {"messages": [HumanMessage(content=user_text)]},
                     config={"callbacks": [langfuse_cb]},

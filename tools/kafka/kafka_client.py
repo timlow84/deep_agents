@@ -23,6 +23,7 @@ Typical background-listener usage in an A2A agent:
 import asyncio
 import json
 import logging
+import os
 import uuid
 from collections.abc import Awaitable, Callable
 
@@ -247,11 +248,17 @@ async def run_kafka_listener(
         topic,
         poll_interval,
     )
+    base_backoff = float(os.getenv("KAFKA_CLIENT_BACKOFF_INTERVAL_SEC", "10"))
+    attempt = 0
+    retry_interval = base_backoff
     while True:
         try:
             async with KafkaRestConsumer(
                 server_url, port, topic, group_id=group_id, seek_offset=seek_offset
             ) as consumer:
+                # Reset backoff state on successful connection
+                attempt = 0
+                retry_interval = base_backoff
                 log.debug("Kafka consumer ready, polling topic: %s", topic)
                 while True:
                     try:
@@ -272,9 +279,27 @@ async def run_kafka_listener(
         except asyncio.CancelledError:
             log.info("Kafka listener stopped (task cancelled)")
             raise
-        except Exception:
-            log.exception("Kafka consumer setup failed — retrying in 10 s")
-            await asyncio.sleep(10.0)
+        except Exception as exc:
+            attempt += 1
+            # Double the interval before each attempt after the first (exponential back-off)
+            if attempt >= 2:
+                retry_interval = retry_interval * 2
+            log.error(
+                "Kafka consumer setup failed — retrying in %.0f s, back-off attempt #%d: %s",
+                retry_interval,
+                attempt,
+                exc,
+            )
+            # Countdown to next retry in 10-second ticks so the agent appears alive
+            _countdown_interval = 10.0
+            remaining = retry_interval
+            while remaining > _countdown_interval:
+                remaining -= _countdown_interval
+                await asyncio.sleep(_countdown_interval)
+                log.info(
+                    "Kafka consumer reconnecting in %.0f s...",
+                    remaining,
+                )
 
 
 @tool
