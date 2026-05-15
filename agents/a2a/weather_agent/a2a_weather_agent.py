@@ -201,7 +201,7 @@ class WeatherAgentExecutor(AgentExecutor):
             #     )
             # [Reference] -> https://langfuse.com/docs/observability/features/tags
             with propagate_attributes(
-                session_id=session_id, trace_name=AGENT_NAME, tags=["execute()"]
+                session_id=session_id, trace_name=AGENT_NAME, tags=["execute()", user_text[:120]]
             ):
                 result = await self._graph.ainvoke(
                     {"messages": [("user", user_text)]},
@@ -211,7 +211,9 @@ class WeatherAgentExecutor(AgentExecutor):
         except Exception as exc:
             log.exception("Weather agent error")
             answer = f"Error: {exc}"
-            with propagate_attributes(session_id=session_id, trace_name=AGENT_NAME, tags=["execute()"]):
+            with propagate_attributes(
+                session_id=session_id, trace_name=AGENT_NAME, tags=["execute()", user_text[:120]]
+            ):
                 with _langfuse_module.get_client().start_as_current_observation(
                     name="graph_invocation_error",
                     as_type="span",
@@ -220,7 +222,6 @@ class WeatherAgentExecutor(AgentExecutor):
                 ):
                     pass
         finally:
-            langfuse_cb.flush()
             _langfuse_module.get_client().flush()
 
         await event_queue.enqueue_event(

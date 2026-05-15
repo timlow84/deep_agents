@@ -247,7 +247,9 @@ async def on_kafka_message(message: dict) -> None:
     query = message.get("query")
     if not query:
         log.warning("Kafka message missing 'query' field — skipping: %s", message)
-        with propagate_attributes(session_id=session_id, trace_name=AGENT_NAME, tags=["on_kafka_message()"]):
+        with propagate_attributes(
+            session_id=session_id, trace_name=AGENT_NAME, tags=["on_kafka_message()"]
+        ):
             with lf.start_as_current_observation(
                 name="missing_query_field",
                 as_type="span",
@@ -268,7 +270,7 @@ async def on_kafka_message(message: dict) -> None:
         # with propagate_attributes(session_id=session_id, trace_name=query[:120]):
         # [Reference] -> https://langfuse.com/docs/observability/features/tags
         with propagate_attributes(
-            session_id=session_id, trace_name=AGENT_NAME, tags=["on_kafka_message()"]
+            session_id=session_id, trace_name=AGENT_NAME, tags=["on_kafka_message()", query[:120]]
         ):
             # Invoke the shared ReAct graph instead of calling _call_weather_a2a directly, so
             # the LLM reasoning step is captured in LangFuse just like the A2A execute() path.
@@ -279,7 +281,9 @@ async def on_kafka_message(message: dict) -> None:
         response = _normalise_content(result["messages"][-1].content)
     except Exception:
         log.exception("Failed to get response for Kafka query: %s", query)
-        with propagate_attributes(session_id=session_id, trace_name=AGENT_NAME, tags=["on_kafka_message()"]):
+        with propagate_attributes(
+            session_id=session_id, trace_name=AGENT_NAME, tags=["on_kafka_message()", query[:120]]
+        ):
             with lf.start_as_current_observation(
                 name="graph_invocation_error",
                 as_type="span",
@@ -289,7 +293,6 @@ async def on_kafka_message(message: dict) -> None:
                 pass
         return
     finally:
-        langfuse_cb.flush()
         lf.flush()
 
     print(f"[Kafka] Weather agent response:\n{response}")
@@ -333,7 +336,7 @@ class OrchestratorAgentExecutor(AgentExecutor):
             # with propagate_attributes(session_id=session_id, trace_name=user_text[:120]):
             # [Reference] -> https://langfuse.com/docs/observability/features/tags
             with propagate_attributes(
-                session_id=session_id, trace_name=AGENT_NAME, tags=["execute()"]
+                session_id=session_id, trace_name=AGENT_NAME, tags=["execute()", user_text[:120]]
             ):
                 # Invoke the shared ReAct graph with LangFuse tracing, so the LLM reasoning step is
                 # captured in LangFuse. Also see the method used for Kafka messages
@@ -347,7 +350,9 @@ class OrchestratorAgentExecutor(AgentExecutor):
         except Exception as exc:
             log.exception("Orchestrator agent error")
             answer = f"Error: {exc}"
-            with propagate_attributes(session_id=session_id, trace_name=AGENT_NAME, tags=["execute()"]):
+            with propagate_attributes(
+                session_id=session_id, trace_name=AGENT_NAME, tags=["execute()", user_text[:120]]
+            ):
                 with _langfuse_module.get_client().start_as_current_observation(
                     name="graph_invocation_error",
                     as_type="span",
@@ -356,7 +361,6 @@ class OrchestratorAgentExecutor(AgentExecutor):
                 ):
                     pass
         finally:
-            langfuse_cb.flush()
             _langfuse_module.get_client().flush()
 
         await event_queue.enqueue_event(

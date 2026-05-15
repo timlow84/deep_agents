@@ -151,10 +151,13 @@ class KafkaRestConsumer:
         assert self._client is not None
         assert self._consumer_base_url is not None
 
-        # Trigger lazy partition assignment before seeking. This ia a known issue in Kafka.
+        # Trigger lazy partition assignment before seeking. This is a known issue in Kafka REST
+        # Proxy: partition assignment is lazy and /positions returns 409 until a fetch has
+        # been issued first.  Use a generous max_bytes so at least one real record is returned
+        # (1 byte was too small — records are never returned, assignment stays unconfirmed).
         await self._client.get(
             f"{self._consumer_base_url}/records",
-            params={"max_bytes": 1},
+            params={"max_bytes": 65536},
             headers={"Accept": _KAFKA_JSON_V2},
         )
 
