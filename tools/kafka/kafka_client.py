@@ -169,11 +169,29 @@ class KafkaRestConsumer:
         offsets = [
             {"topic": self.topic, "partition": pid, "offset": offset} for pid in partition_ids
         ]
-        resp = await self._client.post(
-            f"{self._consumer_base_url}/positions",
-            json={"offsets": offsets},
-            headers={"Content-Type": _KAFKA_V2},
-        )
+        # Retry on 409: partition assignment may not be visible to /positions
+        # immediately after the dummy poll even though the poll triggered it.
+        for _attempt in range(5):
+            resp = await self._client.post(
+                f"{self._consumer_base_url}/positions",
+                json={"offsets": offsets},
+                headers={"Content-Type": _KAFKA_V2},
+            )
+            if resp.status_code == 409 and _attempt < 4:
+                await asyncio.sleep(1.0)
+                continue
+            break
+        if resp.status_code == 409:
+            # Stale instance from a previous crashed run may hold the partition
+            # assignment, preventing seek. Non-fatal: auto.offset.reset="earliest"
+            # already handles the common case; warn and let polling proceed.
+            log.warning(
+                "Seek to offset %d failed (409 after retries) — "
+                "falling back to auto.offset.reset for topic=%s",
+                offset,
+                self.topic,
+            )
+            return
         resp.raise_for_status()
         log.info(
             "Seeked topic=%s partitions=%s to offset=%d",

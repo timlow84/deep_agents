@@ -21,18 +21,20 @@ from typing import Final
 
 import httpx
 import langfuse as _langfuse_module
+import truststore
 from a2a.client import ClientConfig, create_client
 from a2a.types import Message, Part, Role, SendMessageRequest
 from dotenv import load_dotenv
-from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
 from langfuse import propagate_attributes
 from langfuse.langchain import CallbackHandler
+from langgraph.prebuilt import create_react_agent
 
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
+truststore.inject_into_ssl()
 load_dotenv()
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
@@ -122,10 +124,10 @@ async def weather_agent(query: str) -> str:
 
 def build_orchestrator():
     """Return a compiled LangGraph ReAct graph with the weather A2A tool."""
-    return create_agent(
+    return create_react_agent(
         model=get_llm(),
         tools=[weather_agent],
-        system_prompt=_SYSTEM_PROMPT,
+        prompt=_SYSTEM_PROMPT,
     )
 
 
@@ -142,7 +144,7 @@ async def main() -> None:
     while True:
         try:
             query = input("You: ").strip()
-        except EOFError, KeyboardInterrupt:
+        except (EOFError, KeyboardInterrupt):
             break
         if not query:
             continue

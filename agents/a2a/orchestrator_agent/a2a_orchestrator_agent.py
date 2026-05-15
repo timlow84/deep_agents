@@ -73,11 +73,11 @@ from a2a.types.a2a_pb2 import (  # noqa: E402
     TaskStatus,
     TaskStatusUpdateEvent,
 )
-from langchain.agents import create_agent  # noqa: E402
 from langchain_core.messages import HumanMessage  # noqa: E402
 from langchain_core.tools import tool  # noqa: E402
 from langfuse import propagate_attributes  # noqa: E402
 from langfuse.langchain import CallbackHandler  # noqa: E402
+from langgraph.prebuilt import create_react_agent  # noqa: E402
 from starlette.applications import Starlette  # noqa: E402
 
 # Local imports (require sys.path insert above)
@@ -218,13 +218,22 @@ async def weather_agent(query: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Shared graph — used by both the Kafka handler and OrchestratorAgentExecutor
+# so a single LLM+tool graph instance serves all entry points.
+# ---------------------------------------------------------------------------
+
+_graph = create_react_agent(model=get_llm(), tools=[weather_agent], prompt=_SYSTEM_PROMPT)
+
+# ---------------------------------------------------------------------------
 # Kafka message handler
 #
 # Pattern for reuse in future agents:
 #   1. Debug-log the raw message.
 #   2. Extract the user query from the "query" field.
 #   3. Info-log and print the query.
-#   4. Call the relevant sub-agent via A2A.
+#   4. Invoke the shared ReAct graph (with LangFuse tracing) instead of
+#      calling _call_weather_a2a directly, so the LLM reasoning step is
+#      captured in LangFuse just like the A2A execute() path.
 #   5. Info-log and print the response.
 # ---------------------------------------------------------------------------
 
@@ -241,12 +250,27 @@ async def on_kafka_message(message: dict) -> None:
     print(f"[Kafka] Query received: {query}")
     log.info("Kafka query received: %s", query)
 
-    log.info("Calling weather A2A agent for Kafka query: %s", query)
+    langfuse_cb = CallbackHandler()
+    session_id = str(uuid.uuid4())
+    log.info("Calling orchestrator graph for Kafka query: %s", query)
     try:
-        response = await _call_weather_a2a(query)
+        # with propagate_attributes(session_id=session_id, trace_name=query[:120]):
+        with propagate_attributes(
+            session_id=session_id, trace_name=AGENT_NAME, tags=["on_kafka_message()"]
+        ):
+            # Invoke the shared ReAct graph instead of calling _call_weather_a2a directly, so
+            # the LLM reasoning step is captured in LangFuse just like the A2A execute() path.
+            result = await _graph.ainvoke(
+                {"messages": [HumanMessage(content=query)]},
+                config={"callbacks": [langfuse_cb]},
+            )
+        response = _normalise_content(result["messages"][-1].content)
     except Exception:
-        log.exception("Failed to get weather response for Kafka query: %s", query)
+        log.exception("Failed to get response for Kafka query: %s", query)
         return
+    finally:
+        langfuse_cb.flush()
+        _langfuse_module.get_client().flush()
 
     print(f"[Kafka] Weather agent response:\n{response}")
     log.info("Weather agent response for Kafka query: %s", response)
@@ -261,11 +285,7 @@ class OrchestratorAgentExecutor(AgentExecutor):
     """Routes incoming A2A requests to the appropriate specialist sub-agent."""
 
     def __init__(self) -> None:
-        self._graph = create_agent(
-            model=get_llm(),
-            tools=[weather_agent],
-            system_prompt=_SYSTEM_PROMPT,
-        )
+        self._graph = _graph
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         assert context.message is not None
@@ -288,22 +308,26 @@ class OrchestratorAgentExecutor(AgentExecutor):
 
         langfuse_cb = CallbackHandler()
         session_id = context.task_id or str(uuid.uuid4())
+        log.debug("Starting ainvoke: session_id=%s trace_name=%r", session_id, user_text[:60])
         try:
             # with propagate_attributes(session_id=session_id, trace_name=user_text[:120]):
-            #     result = await self._graph.ainvoke(
-            #         {"messages": [HumanMessage(content=user_text)]},
-            #         config={"callbacks": [langfuse_cb]},
-            #     )
-            with propagate_attributes(session_id=session_id, trace_name=AGENT_NAME):
+            with propagate_attributes(
+                session_id=session_id, trace_name=AGENT_NAME, tags=["execute()"]
+            ):
+                # Invoke the shared ReAct graph with LangFuse tracing, so the LLM reasoning step is
+                # captured in LangFuse. Also see the method used for Kafka messages
+                # on_kafka_message()above, which follows the same pattern.
                 result = await self._graph.ainvoke(
                     {"messages": [HumanMessage(content=user_text)]},
                     config={"callbacks": [langfuse_cb]},
                 )
             answer = _normalise_content(result["messages"][-1].content)
+            log.debug("ainvoke completed, answer length=%d", len(answer))
         except Exception as exc:
             log.exception("Orchestrator agent error")
             answer = f"Error: {exc}"
         finally:
+            langfuse_cb.flush()
             _langfuse_module.get_client().flush()
 
         await event_queue.enqueue_event(
