@@ -242,19 +242,31 @@ async def on_kafka_message(message: dict) -> None:
     """Handle a message received from the Kafka topic."""
     log.debug("Kafka message received: %s", json.dumps(message, ensure_ascii=False))
 
+    lf = _langfuse_module.get_client()
+    session_id = str(uuid.uuid4())
     query = message.get("query")
     if not query:
         log.warning("Kafka message missing 'query' field — skipping: %s", message)
+        with propagate_attributes(session_id=session_id, trace_name=AGENT_NAME, tags=["on_kafka_message()"]):
+            with lf.start_as_current_observation(
+                name="missing_query_field",
+                as_type="span",
+                level="WARNING",
+                input=json.dumps(message, ensure_ascii=False),
+                metadata={"reason": "missing_query_field"},
+            ):
+                pass
+        lf.flush()
         return
 
     print(f"[Kafka] Query received: {query}")
     log.info("Kafka query received: %s", query)
 
     langfuse_cb = CallbackHandler()
-    session_id = str(uuid.uuid4())
     log.info("Calling orchestrator graph for Kafka query: %s", query)
     try:
         # with propagate_attributes(session_id=session_id, trace_name=query[:120]):
+        # [Reference] -> https://langfuse.com/docs/observability/features/tags
         with propagate_attributes(
             session_id=session_id, trace_name=AGENT_NAME, tags=["on_kafka_message()"]
         ):
@@ -267,10 +279,18 @@ async def on_kafka_message(message: dict) -> None:
         response = _normalise_content(result["messages"][-1].content)
     except Exception:
         log.exception("Failed to get response for Kafka query: %s", query)
+        with propagate_attributes(session_id=session_id, trace_name=AGENT_NAME, tags=["on_kafka_message()"]):
+            with lf.start_as_current_observation(
+                name="graph_invocation_error",
+                as_type="span",
+                level="ERROR",
+                input=query,
+            ):
+                pass
         return
     finally:
         langfuse_cb.flush()
-        _langfuse_module.get_client().flush()
+        lf.flush()
 
     print(f"[Kafka] Weather agent response:\n{response}")
     log.info("Weather agent response for Kafka query: %s", response)
@@ -311,6 +331,7 @@ class OrchestratorAgentExecutor(AgentExecutor):
         log.debug("Starting ainvoke: session_id=%s trace_name=%r", session_id, user_text[:60])
         try:
             # with propagate_attributes(session_id=session_id, trace_name=user_text[:120]):
+            # [Reference] -> https://langfuse.com/docs/observability/features/tags
             with propagate_attributes(
                 session_id=session_id, trace_name=AGENT_NAME, tags=["execute()"]
             ):
@@ -326,6 +347,14 @@ class OrchestratorAgentExecutor(AgentExecutor):
         except Exception as exc:
             log.exception("Orchestrator agent error")
             answer = f"Error: {exc}"
+            with propagate_attributes(session_id=session_id, trace_name=AGENT_NAME, tags=["execute()"]):
+                with _langfuse_module.get_client().start_as_current_observation(
+                    name="graph_invocation_error",
+                    as_type="span",
+                    level="ERROR",
+                    input=user_text,
+                ):
+                    pass
         finally:
             langfuse_cb.flush()
             _langfuse_module.get_client().flush()

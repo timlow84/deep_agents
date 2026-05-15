@@ -199,6 +199,7 @@ class WeatherAgentExecutor(AgentExecutor):
             #         {"messages": [("user", user_text)]},
             #         config={"callbacks": [langfuse_cb]},
             #     )
+            # [Reference] -> https://langfuse.com/docs/observability/features/tags
             with propagate_attributes(
                 session_id=session_id, trace_name=AGENT_NAME, tags=["execute()"]
             ):
@@ -210,7 +211,16 @@ class WeatherAgentExecutor(AgentExecutor):
         except Exception as exc:
             log.exception("Weather agent error")
             answer = f"Error: {exc}"
+            with propagate_attributes(session_id=session_id, trace_name=AGENT_NAME, tags=["execute()"]):
+                with _langfuse_module.get_client().start_as_current_observation(
+                    name="graph_invocation_error",
+                    as_type="span",
+                    level="ERROR",
+                    input=user_text,
+                ):
+                    pass
         finally:
+            langfuse_cb.flush()
             _langfuse_module.get_client().flush()
 
         await event_queue.enqueue_event(
