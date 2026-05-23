@@ -1,0 +1,5 @@
+fastmcp
+httpx
+uvicorn[standard]
+starlette
+boto3

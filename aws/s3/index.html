@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Weather Chatbot — AWS</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f4f8;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+      color: #fff;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2);
+      flex-shrink: 0;
+    }
+    header .weather-icon { font-size: 1.45em; vertical-align: middle; line-height: 1; }
+    header h1 {
+      font-size: 1.1rem; font-weight: 600; letter-spacing: .3px;
+      flex: 1 1 auto; min-width: 0;
+      overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    }
+    .powered-text {
+      flex: 0 0 auto;
+      overflow: hidden; white-space: nowrap;
+      font-size: .75rem; opacity: .8;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .powered-text img { width: 22px; height: 22px; border-radius: 4px; flex-shrink: 0; }
+
+    /* ── Message list ── */
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      scroll-behavior: smooth;
+      scrollbar-width: thin;
+      scrollbar-color: #1a73e8 #e8edf5;
+    }
+    #messages::-webkit-scrollbar        { width: 8px; }
+    #messages::-webkit-scrollbar-track  { background: #e8edf5; }
+    #messages::-webkit-scrollbar-thumb  { background: #1a73e8; border-radius: 4px; }
+    #messages::-webkit-scrollbar-thumb:hover { background: #1558b0; }
+
+    /* ── Welcome placeholder ── */
+    .welcome {
+      margin: auto;
+      text-align: center;
+      color: #5f6368;
+      user-select: none;
+    }
+    .welcome .hero { font-size: 3.5rem; display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 8px; }
+    .welcome h2    { font-size: 1.1rem; font-weight: 600; margin-bottom: 6px; color: #202124; }
+    .welcome > p   { font-size: .85rem; margin-bottom: 14px; }
+    .welcome-cards { display: flex; flex-direction: column; gap: 10px; text-align: left; max-width: 440px; }
+    .welcome-card  {
+      background: #fff;
+      border-radius: 12px;
+      padding: 13px 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      font-size: .84rem;
+      line-height: 1.65;
+      color: #3c4043;
+    }
+    .welcome-card strong { display: block; margin-bottom: 3px; color: #202124; font-size: .88rem; }
+    .welcome-card code {
+      background: #e8f0fe;
+      color: #1a73e8;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: .82rem;
+      font-weight: 600;
+    }
+
+    /* ── Bubble base ── */
+    .bubble {
+      max-width: min(72%, 560px);
+      padding: 10px 15px;
+      border-radius: 18px;
+      font-size: .93rem;
+      line-height: 1.55;
+      word-break: break-word;
+      white-space: pre-wrap;
+      animation: fadeIn .18s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } }
+
+    .bubble.user {
+      align-self: flex-end;
+      background: #1a73e8;
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.assistant {
+      align-self: flex-start;
+      background: #fff;
+      color: #202124;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.1);
+    }
+    .bubble.error {
+      align-self: flex-start;
+      background: #fce8e6;
+      color: #c5221f;
+      border-bottom-left-radius: 4px;
+    }
+
+    /* ── Typing dots ── */
+    .typing {
+      align-self: flex-start;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 12px 16px;
+      background: #fff;
+      border-radius: 18px;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.1);
+    }
+    .typing span {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #bbb;
+      animation: bounce .9s infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: .15s; }
+    .typing span:nth-child(3) { animation-delay: .30s; }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); }
+      30%            { transform: translateY(-5px); }
+    }
+
+    /* ── Weather card ── */
+    .weather-card {
+      align-self: flex-start;
+      width: min(100%, 460px);
+      background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+      color: #fff;
+      border-radius: 18px;
+      padding: 20px 24px;
+      box-shadow: 0 4px 16px rgba(26,115,232,.35);
+      animation: fadeIn .18s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .weather-card .wc-location {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: .3px;
+    }
+    .weather-card .wc-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .weather-card .wc-icon { width: 64px; height: 64px; }
+    .weather-card .wc-temp {
+      font-size: 2.8rem;
+      font-weight: 300;
+      line-height: 1;
+    }
+    .weather-card .wc-desc {
+      font-size: .9rem;
+      opacity: .9;
+      text-transform: capitalize;
+    }
+    .weather-card .wc-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .weather-card .wc-stat {
+      background: rgba(255,255,255,.15);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: .78rem;
+    }
+    .weather-card .wc-stat-label { opacity: .75; margin-bottom: 2px; }
+    .weather-card .wc-stat-value { font-weight: 700; font-size: .9rem; }
+    .weather-card .wc-maps-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 4px;
+      font-size: .78rem;
+      color: rgba(255,255,255,.85);
+      text-decoration: none;
+    }
+    .weather-card .wc-maps-link:hover { color: #fff; }
+    .weather-card .wc-forecast {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+      margin-top: 10px;
+      border-top: 1px solid rgba(255,255,255,.25);
+      padding-top: 10px;
+    }
+    .weather-card .wc-forecast-day {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1px;
+    }
+    .weather-card .wc-fday-name {
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .2px;
+    }
+    .weather-card .wc-fday-icon { width: 40px; height: 40px; }
+    .weather-card .wc-fday-temps {
+      display: flex;
+      gap: 5px;
+      font-size: .78rem;
+      line-height: 1.3;
+    }
+    .weather-card .wc-fday-hi { font-weight: 700; }
+    .weather-card .wc-fday-lo { opacity: .65; }
+
+    /* ── Input area ── */
+    #input-area {
+      flex-shrink: 0;
+      position: relative;
+      background: #fff;
+      border-top: 1px solid #e0e0e0;
+      padding: 12px 16px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    /* ── Slash-command autocomplete menu ── */
+    #slash-menu {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 4px);
+      left: 16px;
+      right: 16px;
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 12px;
+      box-shadow: 0 -4px 18px rgba(0,0,0,.13);
+      overflow: hidden;
+      z-index: 20;
+    }
+    .slash-item {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 10px 16px;
+      cursor: pointer;
+      transition: background .12s;
+    }
+    .slash-item:not(:last-child) { border-bottom: 1px solid #f0f4f8; }
+    .slash-item:hover, .slash-item.active { background: #e8f0fe; }
+    .slash-item .slash-cmd {
+      font-family: 'Courier New', monospace;
+      font-weight: 700;
+      color: #1a73e8;
+      font-size: .88rem;
+      flex-shrink: 0;
+    }
+    .slash-item .slash-desc {
+      font-size: .78rem;
+      color: #5f6368;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #user-input {
+      flex: 1;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 24px;
+      padding: 10px 18px;
+      font-size: .93rem;
+      outline: none;
+      transition: border-color .2s;
+      resize: none;
+      height: 42px;
+      max-height: 120px;
+      overflow-y: auto;
+      font-family: inherit;
+    }
+    #user-input:focus { border-color: #1a73e8; }
+    #send-btn {
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 42px; height: 42px;
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: background .15s, transform .1s;
+    }
+    #send-btn:hover:not(:disabled) { background: #1558b0; }
+    #send-btn:active:not(:disabled) { transform: scale(.93); }
+    #send-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+    /* ── Author credit ── */
+    #author-credit {
+      flex-shrink: 0;
+      text-align: right;
+      padding: 3px 16px;
+      font-size: .72rem;
+      color: #9aa0a6;
+      background: #f0f4f8;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1><span class="weather-icon">🌤</span> Weather Chatbot — AWS Bedrock AgentCore</h1>
+  <div class="powered-text">
+    <img src="claudecode-color.png" alt="Claude Code" />
+    Powered by AWS Strands + OpenWeatherMap
+  </div>
+</header>
+
+<div id="author-credit">Author: Timothy Low</div>
+
+<div id="messages">
+  <div class="welcome">
+    <div class="hero"><span>🌤</span><span>☁️</span></div>
+    <h2>Weather Chatbot</h2>
+    <p>Ask me about the weather anywhere in the world.</p>
+    <div class="welcome-cards">
+      <div class="welcome-card">
+        <strong>🌦 Weather — anywhere in the world</strong>
+        Use the slash command for a quick weather lookup, or just ask naturally.<br>
+        <code>/weather Tokyo</code> &nbsp;— current weather + 5-day forecast<br>
+        <em>"What's the weather like in Barcelona this week?"</em>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="input-area">
+  <div id="slash-menu"></div>
+  <textarea id="user-input" placeholder="Ask about weather, or type /weather Tokyo…" rows="1"></textarea>
+  <button id="send-btn" title="Send">&#9658;</button>
+</div>
+
+<script>
+  // ── Configuration ──────────────────────────────────────────────────────────
+  // Replace with your actual API Gateway invoke URL after deployment.
+  // Example: 'https://abc123def.execute-api.us-east-1.amazonaws.com/prod'
+  const API_GATEWAY_URL = 'YOUR_API_GATEWAY_URL_HERE';
+
+  // Stable session ID for the browser tab — persists across messages.
+  const SESSION_ID = crypto.randomUUID();
+
+  // ── DOM refs ────────────────────────────────────────────────────────────────
+  const messagesEl = document.getElementById('messages');
+  const inputEl    = document.getElementById('user-input');
+  const sendBtn    = document.getElementById('send-btn');
+
+  const conversationHistory = [];
+
+  // ── Weather card renderer ───────────────────────────────────────────────────
+  function renderWeatherCard(data) {
+    removeWelcome();
+
+    const card = document.createElement('div');
+    card.className = 'weather-card';
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' });
+    const timeStr = now.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+    const locationEl = document.createElement('div');
+    locationEl.className = 'wc-location';
+    locationEl.textContent = `${data.city}${data.country ? ', ' + data.country : ''} — ${dateStr} ${timeStr}`;
+    card.appendChild(locationEl);
+
+    const mainEl = document.createElement('div');
+    mainEl.className = 'wc-main';
+
+    const iconEl = document.createElement('img');
+    iconEl.className = 'wc-icon';
+    iconEl.src = `https://openweathermap.org/img/wn/${data.icon}@2x.png`;
+    iconEl.alt = data.description;
+    mainEl.appendChild(iconEl);
+
+    const tempWrap = document.createElement('div');
+    const tempEl = document.createElement('div');
+    tempEl.className = 'wc-temp';
+    tempEl.textContent = `${Math.round(data.temp)}°C`;
+    const descEl = document.createElement('div');
+    descEl.className = 'wc-desc';
+    descEl.textContent = data.description;
+    tempWrap.appendChild(tempEl);
+    tempWrap.appendChild(descEl);
+    mainEl.appendChild(tempWrap);
+    card.appendChild(mainEl);
+
+    const grid = document.createElement('div');
+    grid.className = 'wc-grid';
+    [
+      { label: 'Feels Like', value: `${Math.round(data.feels_like)}°C` },
+      { label: 'Humidity',   value: `${data.humidity}%` },
+      { label: 'Wind',       value: `${data.wind_speed} m/s` },
+    ].forEach(({ label, value }) => {
+      const stat = document.createElement('div');
+      stat.className = 'wc-stat';
+      stat.innerHTML = `<div class="wc-stat-label">${label}</div><div class="wc-stat-value">${value}</div>`;
+      grid.appendChild(stat);
+    });
+    card.appendChild(grid);
+
+    if (data.forecast && data.forecast.length > 0) {
+      const forecastEl = document.createElement('div');
+      forecastEl.className = 'wc-forecast';
+      data.forecast.forEach(day => {
+        const dayEl = document.createElement('div');
+        dayEl.className = 'wc-forecast-day';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'wc-fday-name';
+        nameEl.textContent = day.day;
+        const fIconEl = document.createElement('img');
+        fIconEl.className = 'wc-fday-icon';
+        fIconEl.src = `https://openweathermap.org/img/wn/${day.icon}.png`;
+        fIconEl.alt = day.description;
+        const tempsEl = document.createElement('div');
+        tempsEl.className = 'wc-fday-temps';
+        tempsEl.innerHTML = `<span class="wc-fday-hi">${Math.round(day.temp_max)}°</span><span class="wc-fday-lo">${Math.round(day.temp_min)}°</span>`;
+        dayEl.appendChild(nameEl);
+        dayEl.appendChild(fIconEl);
+        dayEl.appendChild(tempsEl);
+        forecastEl.appendChild(dayEl);
+      });
+      card.appendChild(forecastEl);
+    }
+
+    if (data.lat != null && data.lon != null) {
+      const mapsLink = document.createElement('a');
+      mapsLink.className = 'wc-maps-link';
+      mapsLink.href = `https://www.google.com/maps?q=${data.lat},${data.lon}`;
+      mapsLink.target = '_blank';
+      mapsLink.rel = 'noopener noreferrer';
+      mapsLink.textContent = '📍 View on Google Maps';
+      card.appendChild(mapsLink);
+    }
+
+    messagesEl.appendChild(card);
+    scrollBottom();
+  }
+
+  // ── Utility helpers ─────────────────────────────────────────────────────────
+  function removeWelcome() {
+    const w = messagesEl.querySelector('.welcome');
+    if (w) w.remove();
+  }
+
+  function scrollBottom() {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function addBubble(text, cls) {
+    removeWelcome();
+    const div = document.createElement('div');
+    div.className = `bubble ${cls}`;
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    scrollBottom();
+    return div;
+  }
+
+  function addTyping() {
+    removeWelcome();
+    const div = document.createElement('div');
+    div.className = 'typing';
+    div.innerHTML = '<span></span><span></span><span></span>';
+    messagesEl.appendChild(div);
+    scrollBottom();
+    return div;
+  }
+
+  function setInputEnabled(on) {
+    inputEl.disabled = !on;
+    sendBtn.disabled = !on;
+    if (on) inputEl.focus();
+  }
+
+  // ── Main send handler ───────────────────────────────────────────────────────
+  async function sendMessage() {
+    let text = inputEl.value.trim();
+    if (!text) return;
+
+    // Expand /weather [city] slash command into a natural-language prompt
+    const weatherCmd = text.match(/^\/weather\s+(.+)$/i);
+    if (weatherCmd) {
+      text = `What is the current weather in ${weatherCmd[1].trim()}? Please include the 5-day forecast.`;
+    }
+
+    inputEl.value = '';
+    inputEl.style.height = '42px';
+    setInputEnabled(false);
+    removeWelcome();
+
+    addBubble(inputEl._originalText || text, 'user');
+    inputEl._originalText = null;
+
+    const typingEl = addTyping();
+
+    try {
+      if (API_GATEWAY_URL === 'YOUR_API_GATEWAY_URL_HERE') {
+        throw new Error('API_GATEWAY_URL is not configured. Update the constant at the top of this script.');
+      }
+
+      const res = await fetch(`${API_GATEWAY_URL}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          history: conversationHistory,
+          session_id: SESSION_ID,
+        }),
+      });
+
+      if (typingEl.parentNode) typingEl.remove();
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Server error ${res.status}`);
+      }
+
+      const data = await res.json();
+
+      // Render structured weather card if the agent returned one
+      if (data.weather && data.weather.type === 'weather') {
+        renderWeatherCard(data.weather);
+      }
+
+      // Always show the text summary below the card
+      if (data.text) {
+        addBubble(data.text, 'assistant');
+        conversationHistory.push({ role: 'user',      content: text });
+        conversationHistory.push({ role: 'assistant', content: data.text });
+      }
+
+    } catch (err) {
+      if (typingEl.parentNode) typingEl.remove();
+      addBubble(`Error: ${err.message}`, 'error');
+    }
+
+    setInputEnabled(true);
+  }
+
+  // ── Slash-command autocomplete ──────────────────────────────────────────────
+  const slashMenuEl = document.getElementById('slash-menu');
+  const SLASH_COMMANDS = [
+    { cmd: '/weather', fill: '/weather ', desc: 'Current weather + 5-day forecast — e.g. /weather Tokyo' },
+  ];
+  let slashActive = -1;
+
+  function renderSlashMenu(matches) {
+    slashMenuEl.innerHTML = '';
+    slashActive = -1;
+    matches.forEach(c => {
+      const item = document.createElement('div');
+      item.className = 'slash-item';
+      item.innerHTML = `<span class="slash-cmd">${c.cmd}</span><span class="slash-desc">${c.desc}</span>`;
+      item.addEventListener('mousedown', e => {
+        e.preventDefault();
+        inputEl.value = c.fill;
+        hideSlashMenu();
+        inputEl.focus();
+      });
+      slashMenuEl.appendChild(item);
+    });
+    slashMenuEl.style.display = 'block';
+  }
+
+  function hideSlashMenu() {
+    slashMenuEl.style.display = 'none';
+    slashActive = -1;
+  }
+
+  function updateSlashMenu(val) {
+    const trimmed = val.trim();
+    if (!trimmed.startsWith('/') || trimmed.includes(' ')) { hideSlashMenu(); return; }
+    const lower   = trimmed.toLowerCase();
+    const matches = SLASH_COMMANDS.filter(c => c.cmd.startsWith(lower));
+    if (!matches.length) { hideSlashMenu(); return; }
+    renderSlashMenu(matches);
+  }
+
+  // Auto-grow textarea
+  inputEl.addEventListener('input', () => {
+    inputEl.style.height = '42px';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
+    updateSlashMenu(inputEl.value);
+  });
+
+  inputEl.addEventListener('blur', () => {
+    setTimeout(hideSlashMenu, 150);
+  });
+
+  // Enter to send (Shift+Enter = newline)
+  inputEl.addEventListener('keydown', e => {
+    if (slashMenuEl.style.display !== 'none') {
+      const items = Array.from(slashMenuEl.querySelectorAll('.slash-item'));
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        slashActive = Math.min(slashActive + 1, items.length - 1);
+        items.forEach((el, i) => el.classList.toggle('active', i === slashActive));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        slashActive = Math.max(slashActive - 1, 0);
+        items.forEach((el, i) => el.classList.toggle('active', i === slashActive));
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && slashActive >= 0)) {
+        e.preventDefault();
+        const idx = slashActive >= 0 ? slashActive : 0;
+        inputEl.value = SLASH_COMMANDS.filter(c => c.cmd.startsWith(inputEl.value.trim().toLowerCase()))[idx]?.fill ?? inputEl.value;
+        hideSlashMenu();
+        return;
+      }
+      if (e.key === 'Escape') { e.preventDefault(); hideSlashMenu(); return; }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  sendBtn.addEventListener('click', sendMessage);
+</script>
+</body>
+</html>

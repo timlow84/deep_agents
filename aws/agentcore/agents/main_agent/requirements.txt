@@ -1,0 +1,5 @@
+strands-agents
+httpx
+fastapi
+uvicorn[standard]
+python-dotenv
