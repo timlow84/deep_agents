@@ -37,16 +37,13 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 _AGENTCORE_RUNTIME_ARN = os.environ.get("AGENTCORE_RUNTIME_ARN", "")
-_AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+_AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-1")
 
-# boto3 client for Bedrock AgentCore Runtime.
-# Service name: 'bedrock-agentcore-runtime'
-# Confirm the exact service name in the boto3 docs once your AgentCore Runtime is provisioned.
-_agentcore_client = boto3.client("bedrock-agentcore-runtime", region_name=_AWS_REGION)
+_agentcore_client = boto3.client("bedrock-agentcore", region_name=_AWS_REGION)
 
 _CORS_HEADERS = {
     "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",           # restrict to your S3 website URL in production
+    "Access-Control-Allow-Origin": "*",  # restrict to your S3 website URL in production
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
 }
@@ -61,8 +58,13 @@ def _err(status: int, message: str) -> dict:
 
 
 def lambda_handler(event: dict, context) -> dict:
-    # Handle CORS pre-flight
-    if event.get("httpMethod") == "OPTIONS":
+    # Handle CORS pre-flight — support both REST API (v1) and HTTP API (v2) event formats
+    http_method = (
+        event.get("requestContext", {}).get("http", {}).get("method")
+        or event.get("httpMethod")
+        or ""
+    )
+    if http_method == "OPTIONS":
         return {"statusCode": 204, "headers": _CORS_HEADERS, "body": ""}
 
     # Parse request body
@@ -82,23 +84,30 @@ def lambda_handler(event: dict, context) -> dict:
 
     # Invoke Bedrock AgentCore Runtime
     # The Runtime forwards the payload to the container's POST /invoke endpoint.
-    agentcore_payload = json.dumps({
-        "inputText": message,
-        "sessionId": session_id,
-    }).encode()
+    agentcore_payload = json.dumps(
+        {
+            "inputText": message,
+            "sessionId": session_id,
+        }
+    ).encode()
 
     try:
-        logger.info("Invoking AgentCore runtime %s for session %s", _AGENTCORE_RUNTIME_ARN, session_id)
+        logger.info(
+            "Invoking AgentCore runtime %s for session %s", _AGENTCORE_RUNTIME_ARN, session_id
+        )
 
-        # TODO: confirm the exact method name once the boto3 SDK for bedrock-agentcore-runtime
-        # is available. Common candidates: invoke_agent_runtime / invoke_runtime / invoke.
         response = _agentcore_client.invoke_agent_runtime(
             agentRuntimeArn=_AGENTCORE_RUNTIME_ARN,
             payload=agentcore_payload,
+            runtimeSessionId=session_id,
         )
 
-        # The response body is a streaming blob; read it fully.
-        raw = response["output"].read() if hasattr(response.get("output", b""), "read") else response.get("output", b"")
+        # Response body is a streaming blob under the 'response' key.
+        raw = (
+            response["response"].read()
+            if hasattr(response.get("response", b""), "read")
+            else response.get("response", b"")
+        )
         agent_result = json.loads(raw)
 
     except _agentcore_client.exceptions.ClientError as exc:
@@ -108,8 +117,10 @@ def lambda_handler(event: dict, context) -> dict:
         logger.exception("Unexpected error invoking AgentCore: %s", exc)
         return _err(500, str(exc))
 
-    return _ok({
-        "text":       agent_result.get("output", ""),
-        "weather":    agent_result.get("weather"),
-        "session_id": session_id,
-    })
+    return _ok(
+        {
+            "text": agent_result.get("output", ""),
+            "weather": agent_result.get("weather"),
+            "session_id": session_id,
+        }
+    )

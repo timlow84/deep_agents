@@ -26,12 +26,12 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Weather AgentCore", version="1.0.0")
 
 
-@app.get("/health")
+@app.get("/ping")
 async def health():
     return {"status": "healthy"}
 
 
-@app.post("/invoke")
+@app.post("/invocations")
 async def handle_invoke(request: Request):
     """Receive an invocation from Bedrock AgentCore and return the agent response.
 

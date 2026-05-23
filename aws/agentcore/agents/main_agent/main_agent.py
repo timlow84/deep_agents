@@ -139,16 +139,23 @@ For non-weather questions, respond normally as plain text (no JSON block).
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
 
-_model = BedrockModel(
-    model_id=os.getenv("CLAUDE_MODEL", "us.anthropic.claude-haiku-4-5-20251001"),
-    region_name=os.getenv("AWS_REGION", "us-east-1"),
-)
+# Built lazily on first request so env vars injected by load_secrets() are visible.
+_agent: "Agent | None" = None
 
-agent = Agent(
-    model=_model,
-    system_prompt=SYSTEM_PROMPT,
-    tools=[geocode_city, get_current_weather, get_5day_forecast],
-)
+
+def _get_agent() -> "Agent":
+    global _agent
+    if _agent is None:
+        model = BedrockModel(
+            model_id=os.getenv("CLAUDE_MODEL", "global.anthropic.claude-haiku-4-5-20251001-v1:0"),
+            region_name=os.getenv("AWS_REGION", "ap-southeast-1"),
+        )
+        _agent = Agent(
+            model=model,
+            system_prompt=SYSTEM_PROMPT,
+            tools=[geocode_city, get_current_weather, get_5day_forecast],
+        )
+    return _agent
 
 
 # ── Invocation helper ─────────────────────────────────────────────────────────
@@ -179,7 +186,7 @@ def invoke(payload: dict) -> dict:
     message = payload.get("inputText", payload.get("message", ""))
     session_id = payload.get("sessionId")
 
-    raw_response = str(agent(message))
+    raw_response = str(_get_agent()(message))
     parsed = _parse_agent_response(raw_response)
 
     return {
