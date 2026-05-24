@@ -281,7 +281,17 @@ async def chat(req: ChatRequest, request: Request):
 
         except Exception as exc:
             log.exception("[exception] %s: %s", type(exc).__name__, exc)
-            yield f"data: {json.dumps({'type': 'error', 'text': str(exc)})}\n\n"
+            err_text = str(exc)
+            # When the LLM calls a tool but the tool response has no content (e.g. MCP
+            # subprocess crashed or returned None), give a friendlier message rather than
+            # exposing the raw Anthropic validation error to the user.
+            if "has no content" in err_text and "tool" in err_text.lower():
+                err_text = (
+                    "I need your current location to find nearby carparks. "
+                    "Please enable location sharing in your browser (the location icon in the address bar) "
+                    "and try again, or type your area name (e.g. \"Tampines\", \"Orchard\")."
+                )
+            yield f"data: {json.dumps({'type': 'error', 'text': err_text})}\n\n"
         finally:
             _langfuse_module.get_client().flush()
 

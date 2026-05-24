@@ -109,16 +109,45 @@ async def get_nearby_carparks(
     """Find the nearest Singapore carparks with real-time lot availability.
 
     Args:
-        lat: Latitude of the search point (WGS84).
-        lon: Longitude of the search point (WGS84).
+        lat: Latitude of the search point (WGS84). Singapore is near lat=1.3521.
+        lon: Longitude of the search point (WGS84). Singapore is near lon=103.8198.
         radius_km: Search radius in kilometres (default 1.0).
         limit: Maximum number of results to return (default 5).
 
     Returns a list of carparks sorted by distance, each with:
       carpark_id, development, area, lat, lon, available_lots,
       lot_type (C=car Y=motorcycle H=heavy), agency, distance_km.
+    If no coordinates are available, returns a list with a single error entry.
     """
-    return await _find_nearby_carparks(lat, lon, radius_km, limit)
+    # Validate that coordinates are plausible before hitting the API.
+    # Return an error entry (instead of raising) so the tool message always has
+    # non-None content — raising can cause langchain-mcp-adapters to produce a
+    # ToolMessage with content=None which the Anthropic API rejects.
+    if lat is None or lon is None:
+        return [{"error": "latitude and longitude are required — user location is not available."}]
+    try:
+        lat = float(lat)
+        lon = float(lon)
+    except (TypeError, ValueError):
+        return [{"error": f"Invalid coordinates: lat={lat!r}, lon={lon!r}. Expected decimal numbers."}]
+    if not (-90.0 <= lat <= 90.0):
+        return [{"error": f"Invalid latitude {lat}. Must be between -90 and 90. Singapore is near lat=1.35."}]
+    if not (-180.0 <= lon <= 180.0):
+        return [{"error": f"Invalid longitude {lon}. Must be between -180 and 180. Singapore is near lon=103.82."}]
+    # Singapore bounding box sanity check (loose — allows nearby Johor/Batam)
+    if not (1.0 <= lat <= 1.8) or not (103.5 <= lon <= 104.2):
+        return [
+            {
+                "error": (
+                    f"Coordinates (lat={lat}, lon={lon}) appear to be outside Singapore. "
+                    "Please share your location while you are in Singapore."
+                )
+            }
+        ]
+    try:
+        return await _find_nearby_carparks(lat, lon, radius_km, limit)
+    except Exception as exc:
+        return [{"error": f"Failed to fetch carpark data: {exc}"}]
 
 
 if __name__ == "__main__":

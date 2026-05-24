@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Weather Chatbot — AWS</title>
+  <!-- oidc-client-ts: handles Cognito PKCE / token exchange / session management.
+       Served from S3 alongside index.html (global exposed as window.oidc). -->
+  <script src="./oidc-client-ts.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -40,6 +43,57 @@
       display: flex; align-items: center; gap: 6px;
     }
     .powered-text img { width: 22px; height: 22px; border-radius: 4px; flex-shrink: 0; }
+
+    /* ── Auth section (top-right of header) ── */
+    #auth-section {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 12px;
+    }
+    #auth-btn {
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      border: 1.5px solid rgba(255,255,255,0.65);
+      border-radius: 20px;
+      padding: 6px 16px;
+      font-size: .82rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: background .15s, border-color .15s;
+      font-family: inherit;
+    }
+    #auth-btn:hover:not(.logged-in) {
+      background: rgba(255,255,255,0.28);
+      border-color: #fff;
+    }
+    #auth-btn.logged-in {
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.35);
+      cursor: default;
+      font-weight: 500;
+    }
+    #logout-btn {
+      background: transparent;
+      color: rgba(255,255,255,0.75);
+      border: none;
+      padding: 4px 8px;
+      font-size: .78rem;
+      cursor: pointer;
+      white-space: nowrap;
+      border-radius: 12px;
+      font-family: inherit;
+      transition: color .15s, background .15s;
+    }
+    #logout-btn:hover {
+      color: #fff;
+      background: rgba(255,255,255,0.15);
+    }
 
     /* ── Message list ── */
     #messages {
@@ -292,7 +346,7 @@
       padding: 10px 18px;
       font-size: .93rem;
       outline: none;
-      transition: border-color .2s;
+      transition: border-color .2s, background .2s, color .2s;
       resize: none;
       height: 42px;
       max-height: 120px;
@@ -300,6 +354,19 @@
       font-family: inherit;
     }
     #user-input:focus { border-color: #1a73e8; }
+
+    /* ── Disabled/locked input state (not yet authenticated) ── */
+    #user-input:disabled {
+      background: #f5f5f5;
+      color: #aaa;
+      border-color: #e0e0e0;
+      cursor: not-allowed;
+    }
+    /* Force placeholder text to show on disabled textarea */
+    #user-input:disabled::placeholder {
+      color: #b0b0b0;
+    }
+
     #send-btn {
       background: #1a73e8;
       color: #fff;
@@ -336,6 +403,11 @@
     <img src="claudecode-color.png" alt="Claude Code" />
     Powered by AWS Strands + OpenWeatherMap
   </div>
+  <!-- ── AWS IAM auth controls (top-right of header) ── -->
+  <div id="auth-section">
+    <button id="auth-btn" onclick="handleLoginClick()">🔑 Login with AWS IAM</button>
+    <button id="logout-btn" style="display:none" onclick="logout()">Sign out</button>
+  </div>
 </header>
 
 <div id="author-credit">Author: Timothy Low</div>
@@ -358,8 +430,13 @@
 
 <div id="input-area">
   <div id="slash-menu"></div>
-  <textarea id="user-input" placeholder="Ask about weather, or type /weather Tokyo…" rows="1"></textarea>
-  <button id="send-btn" title="Send">&#9658;</button>
+  <textarea
+    id="user-input"
+    placeholder="Please login with your IAM credentials to proceed"
+    rows="1"
+    disabled
+  ></textarea>
+  <button id="send-btn" title="Send" disabled>&#9658;</button>
 </div>
 
 <script>
@@ -371,12 +448,135 @@
   // Stable session ID for the browser tab — persists across messages.
   const SESSION_ID = crypto.randomUUID();
 
+  // ── AWS Cognito / oidc-client-ts Configuration ────────────────────────────
+  // Values sourced from: Cognito Console → User pool ap-southeast-1_9AT4o3r3W
+  //   App integration → App clients → weather-chatbot-spa
+  //
+  // COGNITO_DOMAIN: Cognito Console → App integration → Domain
+  //   Set a domain prefix there if you haven't already, e.g. "weather-chatbot-timlow",
+  //   then paste the full URL below.  Must match the Allowed Sign-out URL on the app client.
+  const COGNITO_DOMAIN = 'https://ap-southeast-19at4o3r3w.auth.ap-southeast-1.amazoncognito.com';
+
+  // oidc-client-ts UserManager — mirrors the cognitoAuthConfig from the AWS sample code.
+  // The library handles PKCE, token exchange, session storage, and silent renewal automatically.
+  const _userManager = new oidc.UserManager({
+    authority:     'https://cognito-idp.ap-southeast-1.amazonaws.com/ap-southeast-1_9AT4o3r3W',
+    client_id:     '3fc64mf1pvufqoamndct9eqqfl',
+    redirect_uri:  'https://svc-agentcore.s3.ap-southeast-1.amazonaws.com/public/index.html',
+    response_type: 'code',
+    scope:         'phone openid email',
+  });
+
   // ── DOM refs ────────────────────────────────────────────────────────────────
   const messagesEl = document.getElementById('messages');
   const inputEl    = document.getElementById('user-input');
   const sendBtn    = document.getElementById('send-btn');
+  const authBtn    = document.getElementById('auth-btn');
+  const logoutBtn  = document.getElementById('logout-btn');
 
   const conversationHistory = [];
+
+  // ── Auth state ──────────────────────────────────────────────────────────────
+  // Tracks whether the user has completed authentication.
+  let isAuthenticated = false;
+
+  // ── Login ─────────────────────────────────────────────────────────────────────
+  // Delegates to oidc-client-ts which builds the PKCE verifier/challenge,
+  // stores state in sessionStorage, and redirects to the Cognito Hosted UI.
+  async function login() {
+    await _userManager.signinRedirect();
+  }
+
+  // ── Logout ────────────────────────────────────────────────────────────────────
+  // Clears the oidc-client-ts session then redirects to Cognito's /logout
+  // endpoint so the Cognito SSO cookie is also invalidated.
+  async function logout() {
+    await _userManager.removeUser();   // clears tokens from sessionStorage
+    const logoutUri = 'https://svc-agentcore.s3.ap-southeast-1.amazonaws.com/public/index.html';
+    window.location.href =
+      `${COGNITO_DOMAIN}/logout?client_id=3fc64mf1pvufqoamndct9eqqfl` +
+      `&logout_uri=${encodeURIComponent(logoutUri)}`;
+  }
+
+  // ── Update UI to reflect auth state ──────────────────────────────────────────
+  function _setAuthState(authenticated, username) {
+    isAuthenticated = authenticated;
+
+    if (authenticated) {
+      // Show logged-in state in header
+      authBtn.innerHTML  = `👤 ${username}`;
+      authBtn.classList.add('logged-in');
+      authBtn.title      = `Signed in as ${username}`;
+      logoutBtn.style.display = 'inline-flex';
+
+      // Unlock the chat input
+      inputEl.disabled      = false;
+      sendBtn.disabled      = false;
+      inputEl.placeholder   = 'Ask about weather, or type /weather Tokyo…';
+      inputEl.focus();
+    } else {
+      // Show login button
+      authBtn.innerHTML  = '🔑 Login with AWS IAM';
+      authBtn.classList.remove('logged-in');
+      authBtn.title      = 'Sign in with your AWS IAM credentials via Cognito';
+      logoutBtn.style.display = 'none';
+
+      // Lock the chat input
+      inputEl.disabled    = true;
+      sendBtn.disabled    = true;
+      inputEl.placeholder = 'Please login with your IAM credentials to proceed';
+    }
+  }
+
+  // ── Initialise auth on page load ──────────────────────────────────────────────
+  // oidc-client-ts handles three cases automatically:
+  //   1. Returning from Cognito with ?code= in the URL → signinCallback() exchanges
+  //      the code for tokens (PKCE verifier looked up from sessionStorage by state key)
+  //      and stores the resulting User object in sessionStorage.
+  //   2. Valid User already in sessionStorage (tab reload) → getUser() restores it.
+  //   3. Neither → show login button, keep chat locked.
+  async function initAuth() {
+    // ── Case 1: OAuth2 callback from Cognito ──
+    if (window.location.search.includes('code=')) {
+      try {
+        // signinCallback() reads the code + state from the current URL,
+        // validates the state, exchanges the code for tokens via PKCE,
+        // and stores the User object in sessionStorage.
+        const user = await _userManager.signinCallback();
+
+        // Clean ?code=&state= from the browser address bar.
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        const username = user.profile?.email || user.profile?.['cognito:username'] || 'User';
+        _setAuthState(true, username);
+      } catch (err) {
+        console.error('[Auth] Callback error:', err);
+        _setAuthState(false);
+      }
+      return;
+    }
+
+    // ── Case 2: Existing unexpired session in sessionStorage ──
+    const user = await _userManager.getUser();
+    if (user && !user.expired) {
+      const username = user.profile?.email || user.profile?.['cognito:username'] || 'User';
+      _setAuthState(true, username);
+      return;
+    }
+
+    // ── Case 3: Not authenticated ──
+    _setAuthState(false);
+  }
+
+  // Called by the Login button in the header.
+  function handleLoginClick() {
+    if (!isAuthenticated) {
+      login().catch(err => {
+        console.error('[Auth] Login failed:', err);
+        alert('Login failed: ' + err.message);
+      });
+    }
+  }
 
   // ── Weather card renderer ───────────────────────────────────────────────────
   function renderWeatherCard(data) {
@@ -497,14 +697,20 @@
     return div;
   }
 
+  // Enables or disables the chat input during a message send.
+  // isAuthenticated acts as a gate — the input is never enabled unless authed.
   function setInputEnabled(on) {
-    inputEl.disabled = !on;
-    sendBtn.disabled = !on;
-    if (on) inputEl.focus();
+    const enable = on && isAuthenticated;
+    inputEl.disabled = !enable;
+    sendBtn.disabled = !enable;
+    if (enable) inputEl.focus();
   }
 
   // ── Main send handler ───────────────────────────────────────────────────────
   async function sendMessage() {
+    // Guard: do not proceed if not authenticated
+    if (!isAuthenticated) return;
+
     let text = inputEl.value.trim();
     if (!text) return;
 
@@ -650,6 +856,10 @@
   });
 
   sendBtn.addEventListener('click', sendMessage);
+
+  // ── Bootstrap ─────────────────────────────────────────────────────────────
+  // Run auth check immediately on page load (handles OAuth2 callback too).
+  initAuth();
 </script>
 </body>
 </html>

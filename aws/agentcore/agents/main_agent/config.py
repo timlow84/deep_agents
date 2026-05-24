@@ -9,7 +9,7 @@ Layer 1 — Plain environment variables (non-sensitive)
 
     Examples:
         CLAUDE_MODEL   = us.anthropic.claude-haiku-4-5-20251001
-        AWS_REGION     = us-east-1   (auto-set by the runtime)
+        AWS_REGION     = ap-southeast-1   (auto-set by the runtime)
         MCP_SERVER_URL = http://mcp-server:8080/mcp
 
 Layer 2 — AWS Secrets Manager (sensitive)
@@ -67,7 +67,7 @@ def load_secrets(secret_name: str | None = None) -> None:
     try:
         import boto3  # imported lazily so the module loads without boto3 locally
 
-        region = os.getenv("AWS_REGION", "us-east-1")
+        region = os.getenv("AWS_REGION", "ap-southeast-1")
         client = boto3.client("secretsmanager", region_name=region)
 
         logger.info("Loading secrets from Secrets Manager: %s (region: %s)", name, region)
