@@ -25,7 +25,7 @@ WEATHER_AGENT_PROMPT = (
 )
 
 _MCP_SERVER = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "tools", "weather_mcp_server.py")
+    os.path.join(os.path.dirname(__file__), "..", "tools", "mcp", "weather_mcp_server.py")
 )
 
 

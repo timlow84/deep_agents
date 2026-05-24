@@ -48,7 +48,7 @@ async def get_config():
 @router.post("/carparks")
 async def carparks_direct(req: CarparksRequest):
     """Direct carpark lookup — bypasses the LLM for /carparks N slash commands."""
-    from tools.sg_carpark_mcp_server import _find_nearby_carparks  # noqa: PLC0415
+    from tools.mcp.sg_carpark_mcp_server import _find_nearby_carparks  # noqa: PLC0415
 
     capped_limit = min(req.limit, MAX_CARPARKS)
     results = await _find_nearby_carparks(
@@ -60,7 +60,7 @@ async def carparks_direct(req: CarparksRequest):
 @router.post("/weather")
 async def weather_direct(req: WeatherRequest):
     """Direct weather lookup — bypasses the LLM for /weather [location] slash commands."""
-    from tools.weather_mcp_server import (  # noqa: PLC0415
+    from tools.mcp.weather_mcp_server import (  # noqa: PLC0415
         _geocode_city_impl,
         _get_current_weather_impl,
         _get_forecast_impl,
@@ -90,7 +90,7 @@ async def weather_direct(req: WeatherRequest):
 @router.post("/weather/by-coords")
 async def weather_by_coords(req: WeatherCoordsRequest):
     """Direct weather lookup by lat/lon — used when /weather is typed with no city."""
-    from tools.weather_mcp_server import _get_current_weather_impl, _get_forecast_impl  # noqa: PLC0415
+    from tools.mcp.weather_mcp_server import _get_current_weather_impl, _get_forecast_impl  # noqa: PLC0415
 
     weather = await _get_current_weather_impl(req.lat, req.lon, units="metric")
     forecast = await _get_forecast_impl(req.lat, req.lon, units="metric")

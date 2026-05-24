@@ -25,7 +25,7 @@ CARPARK_AGENT_PROMPT = (
 )
 
 _MCP_SERVER = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "tools", "sg_carpark_mcp_server.py")
+    os.path.join(os.path.dirname(__file__), "..", "tools", "mcp", "sg_carpark_mcp_server.py")
 )
 
 
