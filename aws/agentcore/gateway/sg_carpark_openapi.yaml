@@ -1,0 +1,238 @@
+openapi: "3.0.3"
+
+info:
+  title: Singapore Carpark Availability API
+  description: >
+    Find nearby Singapore carparks with real-time lot availability.
+    Wraps the LTA DataMall CarParkAvailabilityv2 API with coordinate
+    validation, Haversine-based proximity filtering, and result sorting.
+  version: "1.0.0"
+  contact:
+    name: Deep Agents – SG Carpark Tool
+  license:
+    name: MIT
+
+servers:
+  - url: https://datamall2.mytransport.sg/ltaodataservice
+    description: >
+      LTA DataMall v2 API — primary backend for real-time carpark lot counts.
+
+paths:
+
+  /CarParkAvailabilityv2:
+    get:
+      operationId: get_nearby_carparks
+      summary: Find the nearest Singapore carparks with real-time lot availability
+      description: >
+        Returns Singapore carparks within a given radius of the provided
+        WGS84 coordinates, sorted by ascending distance from the search point.
+        Paginates transparently through the LTA DataMall OData feed (500 records
+        per page) and filters results client-side using the Haversine formula.
+
+        Coordinate constraints:
+          - lat must be between 1.0 and 1.8 (Singapore bounding box)
+          - lon must be between 103.5 and 104.2 (Singapore bounding box)
+
+        Each result includes the carpark identifier, development name, area,
+        coordinates, available lot count, lot type, and the operating agency.
+      tags:
+        - carparks
+      parameters:
+        - $ref: '#/components/parameters/lat'
+        - $ref: '#/components/parameters/lon'
+        - $ref: '#/components/parameters/radius_km'
+        - $ref: '#/components/parameters/limit'
+        - name: $skip
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+          description: >
+            OData skip token for internal pagination (500 records per page).
+            Callers do not need to set this — the gateway handles pagination
+            automatically when fetching all records before filtering.
+      security:
+        - sigv4: []
+      responses:
+        "200":
+          description: Carparks within the requested radius, sorted by distance
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    type: array
+                    description: List of carparks sorted by ascending distance_km
+                    items:
+                      $ref: '#/components/schemas/CarparkResult'
+              example:
+                value:
+                  - carpark_id: "HE12"
+                    development: "RIVERVALE MALL"
+                    area: "Sengkang"
+                    lat: 1.3921
+                    lon: 103.8948
+                    available_lots: 42
+                    lot_type: "C"
+                    agency: "HDB"
+                    distance_km: 0.312
+        "400":
+          description: Invalid or out-of-Singapore coordinates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Upstream LTA DataMall API error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+
+  parameters:
+    lat:
+      name: lat
+      in: query
+      required: true
+      schema:
+        type: number
+        format: double
+        minimum: 1.0
+        maximum: 1.8
+        example: 1.3521
+      description: >
+        Latitude of the search point (WGS84 decimal degrees).
+        Singapore is approximately lat=1.3521. Must be between 1.0 and 1.8.
+
+    lon:
+      name: lon
+      in: query
+      required: true
+      schema:
+        type: number
+        format: double
+        minimum: 103.5
+        maximum: 104.2
+        example: 103.8198
+      description: >
+        Longitude of the search point (WGS84 decimal degrees).
+        Singapore is approximately lon=103.8198. Must be between 103.5 and 104.2.
+
+    radius_km:
+      name: radius_km
+      in: query
+      required: false
+      schema:
+        type: number
+        format: double
+        default: 1.0
+        minimum: 0.1
+        maximum: 10.0
+        example: 1.0
+      description: >
+        Search radius in kilometres. Only carparks within this distance from
+        (lat, lon) are returned. Defaults to 1.0 km. Maximum 10.0 km.
+
+    limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 5
+        minimum: 1
+        maximum: 20
+        example: 5
+      description: >
+        Maximum number of carparks to return, sorted by ascending distance.
+        Defaults to 5. Maximum 20.
+
+  schemas:
+    CarparkResult:
+      type: object
+      description: A single carpark with real-time availability and location data
+      required:
+        - carpark_id
+        - lat
+        - lon
+        - available_lots
+        - lot_type
+        - agency
+        - distance_km
+      properties:
+        carpark_id:
+          type: string
+          description: LTA-assigned carpark identifier (e.g. "HE12", "PP4")
+          example: "HE12"
+        development:
+          type: string
+          description: Building or estate name associated with the carpark
+          example: "RIVERVALE MALL"
+        area:
+          type: string
+          description: District or town area (e.g. "Sengkang", "Toa Payoh")
+          example: "Sengkang"
+        lat:
+          type: number
+          format: double
+          description: Carpark latitude (WGS84)
+          example: 1.3921
+        lon:
+          type: number
+          format: double
+          description: Carpark longitude (WGS84)
+          example: 103.8948
+        available_lots:
+          type: integer
+          description: Current number of available parking lots (real-time)
+          example: 42
+        lot_type:
+          type: string
+          enum: ["C", "Y", "H"]
+          description: >
+            Lot type code:
+              C = car
+              Y = motorcycle (Y-plate)
+              H = heavy vehicle
+          example: "C"
+        agency:
+          type: string
+          enum: ["HDB", "URA", "LTA"]
+          description: Government agency operating the carpark
+          example: "HDB"
+        distance_km:
+          type: number
+          format: double
+          description: >
+            Great-circle distance in kilometres from the search point to
+            this carpark, computed using the Haversine formula.
+          example: 0.312
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable description of the error
+          example: >
+            Coordinates (lat=51.5, lon=-0.12) appear to be outside Singapore.
+            Please share your location while you are in Singapore.
+
+  securitySchemes:
+    sigv4:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: >
+        AWS Signature Version 4 (SigV4) signed request.
+        Callers must sign requests with IAM credentials that have the
+        bedrock-agentcore:InvokeGateway permission on the gateway ARN.
+        Service name for signing: bedrock-agentcore
+        Region: ap-southeast-1

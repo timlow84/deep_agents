@@ -2,7 +2,7 @@
 
 > **Account:** `373447294617`  
 > **Region:** `ap-southeast-1`  
-> **Last verified:** 2026-05-24
+> **Last verified:** 2026-05-24 (gateway added 2026-05-24)
 
 This document describes every IAM permission required between AWS components in the
 **Deep Agents** weather-chatbot architecture, including the reason each permission is
@@ -42,6 +42,12 @@ needed. Permissions were verified against the live account using the AWS CLI.
 | ECR — Main Agent | `373447294617.dkr.ecr.ap-southeast-1.amazonaws.com/deep-agents/main-agent` |
 | ECR — MCP Server | `373447294617.dkr.ecr.ap-southeast-1.amazonaws.com/deep-agents/mcp-server` |
 | IAM Execution Role | `arn:aws:iam::373447294617:role/Bedrock_Role` |
+| **AgentCore Gateway** | `arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:gateway/sg-carpark-gateway-z3fc8wewlc` |
+| **Gateway MCP URL** | `https://sg-carpark-gateway-z3fc8wewlc.gateway.bedrock-agentcore.ap-southeast-1.amazonaws.com/mcp` |
+| **Gateway Target** | ID `D6NDMNRBLS` — `lta-carpark-rest-api` (OpenAPI schema from S3) |
+| **API Key Credential Provider** | `arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:token-vault/default/apikeycredentialprovider/lta-datamall-api-key` |
+| **OpenAPI Schema (S3)** | `s3://bedrock-agentcore-runtime-373447294617-ap-southeast-1-naea56xtb/OpenAPI/sg_carpark_openapi.yaml` |
+| **Lambda Interceptor** | `arn:aws:lambda:ap-southeast-1:373447294617:function:lta-datamall-api-interceptor` |
 
 ---
 
@@ -330,6 +336,161 @@ integration in the console (Add Trigger → API Gateway) or via the CLI with
 | AgentCore Runtime | Secrets Manager | `secretsmanager:GetSecretValue` | Inline: `SecretsManagerAccess` |
 | AgentCore Runtime | ECR | `ecr:GetAuthorizationToken`, `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` | Managed: `AmazonEC2ContainerRegistryReadOnly` |
 | AgentCore / Admin | Role self-pass | `iam:PassRole` | Inline: `PassBedrockRole` |
+| IAM caller | AgentCore Gateway | `bedrock-agentcore:InvokeGateway` | Caller's IAM policy |
+
+---
+
+## AgentCore Gateway: `sg-carpark-gateway` (MCP / IAM Inbound Auth)
+
+The gateway exposes the **Singapore Carpark Availability API** (LTA DataMall
+`CarParkAvailabilityv2`) as a managed MCP endpoint. Any agent or SDK client
+with the `bedrock-agentcore:InvokeGateway` permission can connect to it over
+the MCP protocol without managing the MCP server themselves.
+
+### Resources
+
+| Resource | Value |
+|---|---|
+| Gateway ARN | `arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:gateway/sg-carpark-gateway-z3fc8wewlc` |
+| Gateway ID | `sg-carpark-gateway-z3fc8wewlc` |
+| MCP Endpoint URL | `https://sg-carpark-gateway-z3fc8wewlc.gateway.bedrock-agentcore.ap-southeast-1.amazonaws.com/mcp` |
+| Protocol | MCP (versions `2025-06-18`, `2025-03-26`) |
+| Inbound auth | `AWS_IAM` (SigV4-signed requests) |
+| Execution role | `arn:aws:iam::373447294617:role/Bedrock_Role` |
+| Target ID | `D6NDMNRBLS` |
+| Target name | `lta-carpark-rest-api` |
+| Target type | REST API — OpenAPI schema from S3 |
+| OpenAPI schema | `s3://bedrock-agentcore-runtime-373447294617-ap-southeast-1-naea56xtb/OpenAPI/sg_carpark_openapi.yaml` |
+| Backend server | `https://datamall2.mytransport.sg/ltaodataservice` (LTA DataMall v2) |
+| API Key credential provider | `arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:token-vault/default/apikeycredentialprovider/lta-datamall-api-key` |
+| API Key secret ARN | `arn:aws:secretsmanager:ap-southeast-1:373447294617:secret:bedrock-agentcore-identity!default/apikey/lta-datamall-api-key-0e976f98-LMwdhV` |
+
+### Architecture
+
+```
+MCP Client (agent / SDK)
+      │
+      │  POST /mcp  (SigV4 signed — AWS_IAM)
+      ▼
+AgentCore Gateway  sg-carpark-gateway-z3fc8wewlc
+      │  Tool: get_nearby_carparks
+      │  Credential: API key (AccountKey header)
+      ▼
+LTA DataMall REST API  https://datamall2.mytransport.sg/ltaodataservice
+      GET /CarParkAvailabilityv2?$skip=…
+```
+
+### 11. Caller → AgentCore Gateway (Inbound IAM Auth)
+
+**Resource:** `arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:gateway/sg-carpark-gateway-z3fc8wewlc`
+
+Any IAM principal (user, role, Lambda, AgentCore runtime) that needs to call
+the gateway must have the following **identity-based policy** attached:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "bedrock-agentcore:InvokeGateway",
+  "Resource": "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:gateway/sg-carpark-gateway-z3fc8wewlc"
+}
+```
+
+| Permission | Reason |
+|---|---|
+| `bedrock-agentcore:InvokeGateway` | Required to send MCP requests to the gateway endpoint. Requests that do not carry a valid SigV4 signature from an authorised principal receive `403 Forbidden`. |
+
+> **How to sign requests:** Use the AWS SDK's SigV4 signer targeting service
+> `bedrock-agentcore`, region `ap-southeast-1`. The
+> `langchain-mcp-adapters` / `mcp` Python SDK can use `StreamableHTTPTransport`
+> with a signed `httpx` client, or you can use `boto3` and append the
+> `Authorization` header manually.
+
+### 12. Gateway → LTA DataMall REST API (Outbound API Key + Header Translation)
+
+The gateway authenticates outbound calls to the LTA DataMall API using the
+`API_KEY` credential provider (`lta-datamall-api-key`), with a Lambda
+interceptor handling header translation.
+
+| Setting | Value |
+|---|---|
+| Credential provider type | `API_KEY` |
+| Injected header (AgentCore default) | `x-api-key` |
+| LTA expected header | `AccountKey` |
+| Header translation | Lambda interceptor `lta-datamall-api-interceptor` at `REQUEST` point |
+
+**Header translation flow:**
+
+```
+AgentCore Gateway (injects x-api-key)
+      │
+      ▼  REQUEST interception point
+Lambda  lta-datamall-api-interceptor
+      │  renames x-api-key → AccountKey
+      ▼
+LTA DataMall API  (receives AccountKey: <value>) ✓
+```
+
+### 13. Gateway → Lambda Interceptor (REQUEST point)
+
+The gateway calls the header-translation Lambda before forwarding each request
+to the LTA DataMall backend.
+
+**Resource:** `arn:aws:lambda:ap-southeast-1:373447294617:function:lta-datamall-api-interceptor`
+
+**Lambda resource policy** (grants `bedrock-agentcore.amazonaws.com` invoke rights
+scoped to this specific gateway ARN — added via `lambda:AddPermission`):
+
+```json
+{
+  "Sid": "AllowBedrockAgentCoreGatewayInvoke",
+  "Effect": "Allow",
+  "Principal": { "Service": "bedrock-agentcore.amazonaws.com" },
+  "Action": "lambda:InvokeFunction",
+  "Resource": "arn:aws:lambda:ap-southeast-1:373447294617:function:lta-datamall-api-interceptor",
+  "Condition": {
+    "ArnLike": {
+      "AWS:SourceArn": "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:gateway/sg-carpark-gateway-z3fc8wewlc"
+    }
+  }
+}
+```
+
+| Permission | Reason |
+|---|---|
+| `lambda:InvokeFunction` (resource policy) | Allows the gateway service to call the interceptor Lambda synchronously on every REQUEST. The `SourceArn` condition prevents any other gateway from invoking this function. |
+| `AWSLambdaBasicExecutionRole` (via `Bedrock_Role`) | Allows the Lambda to write execution logs to CloudWatch (`/aws/lambda/lta-datamall-api-interceptor`). |
+
+**Interceptor logic** — source at
+[aws/agentcore/gateway/lta_datamall_api_interceptor.py](../agentcore/gateway/lta_datamall_api_interceptor.py):
+
+1. Receives the full outbound request event (`passRequestHeaders: true`)
+2. Searches headers (case-insensitive) for `x-api-key`
+3. Replaces it with `AccountKey` preserving the value
+4. Returns the modified event — AgentCore forwards the translated request to LTA DataMall
+
+To redeploy after code changes:
+
+```bash
+# Re-zip and update Lambda code
+cd aws/agentcore/gateway
+zip lta_datamall_api_interceptor.zip lta_datamall_api_interceptor.py
+aws lambda update-function-code \
+  --function-name lta-datamall-api-interceptor \
+  --zip-file fileb://lta_datamall_api_interceptor.zip \
+  --region ap-southeast-1
+```
+
+### Local source file
+
+The OpenAPI schema source is committed at
+[aws/agentcore/gateway/sg_carpark_openapi.yaml](../agentcore/gateway/sg_carpark_openapi.yaml).
+Update this file and re-upload to S3 whenever the API contract changes:
+
+```bash
+aws s3 cp aws/agentcore/gateway/sg_carpark_openapi.yaml \
+  s3://bedrock-agentcore-runtime-373447294617-ap-southeast-1-naea56xtb/OpenAPI/sg_carpark_openapi.yaml \
+  --region ap-southeast-1
+```
 
 ---
 
@@ -342,7 +503,10 @@ integration in the console (Add Trigger → API Gateway) or via the CLI with
 | `AmazonBedrockFullAccess` scope | Replace with a least-privilege inline policy | Full Bedrock access grants all model invocation and management rights. Restrict to only the Claude model ARNs in use. |
 | `AmazonS3ObjectLambdaExecutionRolePolicy` | Review if needed | This policy is attached to `Bedrock_Role` but the architecture does not appear to use S3 Object Lambda. Remove if unused to follow least-privilege. |
 | CloudWatch Logs retention | Set a log retention policy on `/aws/lambda/invoke-agentcore` | By default Lambda log groups have no expiry, which incurs unbounded storage costs. |
+| Gateway `InvokeGateway` for AgentCore Runtime | Add `bedrock-agentcore:InvokeGateway` to `Bedrock_Role` inline policy | Allows the main AgentCore agent runtime to call the SG Carpark gateway as a downstream tool. |
+| `Bedrock_Role` S3 read for OpenAPI schema | Add `s3:GetObject` on `bedrock-agentcore-runtime-*/OpenAPI/*` to `Bedrock_Role` | The `timothylowaws` IAM user lacks `iam:PutRolePolicy`; an admin must add this inline policy so the gateway can refresh the schema from S3. |
+| Lambda interceptor CloudWatch log retention | Set retention on `/aws/lambda/lta-datamall-api-interceptor` | Without a retention policy the log group accumulates indefinitely. |
 
 ---
 
-*Generated by Claude Code — verified against live AWS account `373447294617` on 2026-05-24.*
+*Generated by Claude Code — verified against live AWS account `373447294617` on 2026-05-24. Gateway + interceptor added 2026-05-25.*

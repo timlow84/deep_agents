@@ -1,0 +1,25 @@
+{
+  "gatewayIdentifier": "sg-carpark-gateway-z3fc8wewlc",
+  "name": "lta-carpark-rest-api",
+  "description": "LTA DataMall CarParkAvailabilityv2 REST API target — real-time Singapore carpark lot counts",
+  "targetConfiguration": {
+    "mcp": {
+      "openApiSchema": {
+        "s3": {
+          "uri": "s3://bedrock-agentcore-runtime-373447294617-ap-southeast-1-naea56xtb/OpenAPI/sg_carpark_openapi.yaml",
+          "bucketOwnerAccountId": "373447294617"
+        }
+      }
+    }
+  },
+  "credentialProviderConfigurations": [
+    {
+      "credentialProviderType": "API_KEY",
+      "credentialProvider": {
+        "apiKeyCredentialProvider": {
+          "providerArn": "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:token-vault/default/apikeycredentialprovider/lta-datamall-api-key"
+        }
+      }
+    }
+  ]
+}

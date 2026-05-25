@@ -1,0 +1,31 @@
+{
+  "gatewayIdentifier": "sg-carpark-gateway-z3fc8wewlc",
+  "name": "sg-carpark-gateway",
+  "description": "MCP gateway fronting the LTA DataMall Carpark Availability REST API with IAM inbound auth",
+  "roleArn": "arn:aws:iam::373447294617:role/Bedrock_Role",
+  "protocolType": "MCP",
+  "protocolConfiguration": {
+    "mcp": {
+      "instructions": "Use this gateway to find real-time Singapore carpark lot availability. Call get_nearby_carparks with a WGS84 lat/lon, optional radius_km (default 1.0 km) and optional limit (default 5, max 20) to retrieve nearby carparks sorted by ascending distance.",
+      "supportedVersions": ["2025-06-18", "2025-03-26"],
+      "streamingConfiguration": {
+        "enableResponseStreaming": false
+      }
+    }
+  },
+  "authorizerType": "AWS_IAM",
+  "exceptionLevel": "DEBUG",
+  "interceptorConfigurations": [
+    {
+      "interceptor": {
+        "lambda": {
+          "arn": "arn:aws:lambda:ap-southeast-1:373447294617:function:lta-datamall-api-interceptor"
+        }
+      },
+      "interceptionPoints": ["REQUEST"],
+      "inputConfiguration": {
+        "passRequestHeaders": true
+      }
+    }
+  ]
+}
