@@ -42,19 +42,8 @@ paths:
         - $ref: '#/components/parameters/lon'
         - $ref: '#/components/parameters/radius_km'
         - $ref: '#/components/parameters/limit'
-        - name: $skip
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 0
-            minimum: 0
-          description: >
-            OData skip token for internal pagination (500 records per page).
-            Callers do not need to set this — the gateway handles pagination
-            automatically when fetching all records before filtering.
       security:
-        - sigv4: []
+        - accountKey: []
       responses:
         "200":
           description: Carparks within the requested radius, sorted by distance
@@ -226,13 +215,11 @@ components:
             Please share your location while you are in Singapore.
 
   securitySchemes:
-    sigv4:
+    accountKey:
       type: apiKey
       in: header
-      name: Authorization
+      name: AccountKey
       description: >
-        AWS Signature Version 4 (SigV4) signed request.
-        Callers must sign requests with IAM credentials that have the
-        bedrock-agentcore:InvokeGateway permission on the gateway ARN.
-        Service name for signing: bedrock-agentcore
-        Region: ap-southeast-1
+        LTA DataMall v2 API key.  Supply the account key issued by the
+        LTA DataMall portal as the AccountKey request header.
+        The AgentCore Gateway credential provider injects this automatically.

@@ -1,11 +1,11 @@
 """Lambda function — API Gateway → Bedrock AgentCore Runtime → response.
 
 This Lambda sits behind API Gateway and proxies chat requests to the
-Bedrock AgentCore Runtime endpoint that hosts the Strands weather agent.
+Bedrock AgentCore Runtime endpoint that hosts the Strands weather + carpark agent.
 
 Required environment variables:
     AGENTCORE_RUNTIME_ARN  — ARN of the deployed AgentCore Runtime
-                             e.g. arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/abc123
+                             e.g. arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/abc123
     AWS_REGION             — AWS region (auto-set by Lambda runtime)
 
 API Gateway configuration:
@@ -23,6 +23,7 @@ Response body (to browser):
     {
         "text":       "plain-text agent summary",
         "weather":    { ...structured weather data... } | null,
+        "carparks":   [ ...list of carpark dicts... ] | null,
         "session_id": "uuid"
     }
 """
@@ -82,6 +83,11 @@ def lambda_handler(event: dict, context) -> dict:
     if not _AGENTCORE_RUNTIME_ARN:
         return _err(500, "AGENTCORE_RUNTIME_ARN environment variable is not set")
 
+    # AgentCore runtimeSessionId must be at least 33 characters.
+    # Use the Lambda request ID (always a 36-char UUID) as the runtime session.
+    # The user-facing session_id is passed inside the payload for conversation history.
+    runtime_session_id = context.aws_request_id
+
     # Invoke Bedrock AgentCore Runtime
     # The Runtime forwards the payload to the container's POST /invoke endpoint.
     agentcore_payload = json.dumps(
@@ -93,13 +99,14 @@ def lambda_handler(event: dict, context) -> dict:
 
     try:
         logger.info(
-            "Invoking AgentCore runtime %s for session %s", _AGENTCORE_RUNTIME_ARN, session_id
+            "Invoking AgentCore runtime %s for session %s (runtimeSessionId=%s)",
+            _AGENTCORE_RUNTIME_ARN, session_id, runtime_session_id,
         )
 
         response = _agentcore_client.invoke_agent_runtime(
             agentRuntimeArn=_AGENTCORE_RUNTIME_ARN,
             payload=agentcore_payload,
-            runtimeSessionId=session_id,
+            runtimeSessionId=runtime_session_id,
         )
 
         # Response body is a streaming blob under the 'response' key.
@@ -119,8 +126,9 @@ def lambda_handler(event: dict, context) -> dict:
 
     return _ok(
         {
-            "text": agent_result.get("output", ""),
-            "weather": agent_result.get("weather"),
+            "text":       agent_result.get("output", ""),
+            "weather":    agent_result.get("weather"),
+            "carparks":   agent_result.get("carparks"),   # structured carpark data from carpark sub-agent
             "session_id": session_id,
         }
     )
