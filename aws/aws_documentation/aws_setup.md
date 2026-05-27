@@ -741,6 +741,18 @@ The interceptor is an optional but useful component. Currently it only passes MC
 messages through unchanged (logging them). The header rename is handled by the
 credential provider (Step 7d), not the interceptor.
 
+**IAM for the interceptor Lambda:**  
+The interceptor reuses `Bedrock_Role` (passed as `--role` at create time). No additional
+inline policies are needed because:
+- `AWSLambdaBasicExecutionRole` (already attached to `Bedrock_Role`) grants CloudWatch Logs
+  write access — the only permission a passthrough interceptor needs.
+- The interceptor does **not** call any AWS services itself (no Bedrock, no Secrets Manager,
+  no S3). If you extend it to do so in future, add the relevant inline policy to `Bedrock_Role`.
+
+The **reverse direction** — allowing AgentCore Gateway to *invoke* the interceptor Lambda —
+is a **resource-based policy** on the Lambda function itself (Step 7e-ii below), not an IAM
+role permission. This is the same pattern used for API Gateway → Lambda.
+
 ```bash
 # 7e-i. Create the interceptor Lambda
 cd aws/agentcore/gateway
