@@ -2,11 +2,11 @@
 
 > **Account:** `373447294617`  
 > **Region:** `ap-southeast-1`  
-> **Last verified:** 2026-05-27 (full stack working end-to-end: gateway AccountKey fix, $skip removed, Lambda runtimeSessionId fix)
+> **Last verified:** 2026-05-27 — full stack working end-to-end (all blocking gaps resolved)
 
 This document describes every IAM permission required between AWS components in the
-**Deep Agents** weather-chatbot architecture, including the reason each permission is
-needed. Permissions were verified against the live account using the AWS CLI.
+**Deep Agents** weather + Singapore carpark chatbot architecture, including the reason
+each permission is needed. All permissions have been verified against the live account.
 
 ---
 
@@ -47,7 +47,8 @@ needed. Permissions were verified against the live account using the AWS CLI.
 | Lambda Function | `arn:aws:lambda:ap-southeast-1:373447294617:function:invoke-agentcore` |
 | AgentCore Runtime — main_agent | `arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:runtime/deepAgentsMainAgent-mjSHXIEuzM` |
 | AgentCore Runtime — carpark_agent | `arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:runtime/deepAgentsCarparkAgent-t3soUG2aAd` |
-| Secrets Manager | `arn:aws:secretsmanager:ap-southeast-1:373447294617:secret:deep-agents/api-keys-Cmsypp` |
+| Secrets Manager — app keys | `arn:aws:secretsmanager:ap-southeast-1:373447294617:secret:deep-agents/api-keys-Cmsypp` |
+| Secrets Manager — LTA API key | `arn:aws:secretsmanager:ap-southeast-1:373447294617:secret:bedrock-agentcore-identity!default/apikey/lta-datamall-api-key-0e976f98` |
 | ECR — Main Agent | `373447294617.dkr.ecr.ap-southeast-1.amazonaws.com/deep-agents/main-agent` |
 | ECR — MCP Server | `373447294617.dkr.ecr.ap-southeast-1.amazonaws.com/deep-agents/mcp-server` |
 | ECR — Carpark Agent | `373447294617.dkr.ecr.ap-southeast-1.amazonaws.com/deep-agents/carpark-agent` |
@@ -199,6 +200,31 @@ integration in the console (Add Trigger → API Gateway) or via the CLI with
 |---|---|
 | `lambda:InvokeFunction` | Allows the API Gateway service principal (`apigateway.amazonaws.com`) to invoke the Lambda function when a `POST /chat` request arrives. Without this, API Gateway returns `500 Internal Server Error` or `403`. |
 
+**Important implementation note — `runtimeSessionId` minimum length:**
+
+The Lambda handler (`handler.py`) uses `context.aws_request_id` (always a 36-character
+UUID) as the `runtimeSessionId` for `invoke_agent_runtime`. Do **not** pass the
+user-provided `session_id` here — the user may supply a short string, and AgentCore
+requires `runtimeSessionId` to be at least 33 characters.
+
+```python
+# Correct — always a 36-char UUID from the Lambda context
+runtime_session_id = context.aws_request_id
+
+# The user's session_id is passed inside the payload for conversation state,
+# not as runtimeSessionId
+agentcore_payload = json.dumps({
+    "inputText": message,
+    "sessionId": session_id,       # user-facing session (any length)
+}).encode()
+
+response = client.invoke_agent_runtime(
+    agentRuntimeArn=_AGENTCORE_RUNTIME_ARN,
+    payload=agentcore_payload,
+    runtimeSessionId=runtime_session_id,  # must be >= 33 chars
+)
+```
+
 ---
 
 ### 5. Lambda → Bedrock AgentCore Runtime (main_agent)
@@ -206,8 +232,11 @@ integration in the console (Add Trigger → API Gateway) or via the CLI with
 **Role:** `Bedrock_Role` (Lambda execution role)  
 **Inline policies:** `AgentCoreInvoke` + `AgentCoreInvokeRuntime`
 
+AgentCore performs IAM checks at **two levels** — the runtime resource ARN and the
+specific endpoint ARN. Both grants are required; omitting either causes `AccessDenied`.
+
 ```json
-// AgentCoreInvoke — NEEDS UPDATE (see below)
+// AgentCoreInvoke — runtime-level check
 {
   "Effect": "Allow",
   "Action": "bedrock-agentcore:InvokeAgentRuntime",
@@ -217,7 +246,7 @@ integration in the console (Add Trigger → API Gateway) or via the CLI with
   ]
 }
 
-// AgentCoreInvokeRuntime — NEEDS UPDATE (see below)
+// AgentCoreInvokeRuntime — endpoint-level check
 {
   "Effect": "Allow",
   "Action": "bedrock-agentcore:InvokeAgentRuntime",
@@ -228,26 +257,20 @@ integration in the console (Add Trigger → API Gateway) or via the CLI with
 }
 ```
 
-> ⚠️ **Action required (manual):** The IAM user `timothylowaws` lacks `iam:PutRolePolicy`.
-> An AWS account admin must update both inline policies on `Bedrock_Role` to include the
-> carpark_agent resource ARNs shown above. Without this, main_agent's A2A call to
-> carpark_agent returns `AccessDenied`.
-
 | Permission | Reason |
 |---|---|
-| `bedrock-agentcore:InvokeAgentRuntime` on runtime ARN | Allows the Lambda to call the AgentCore Runtime's top-level invoke endpoint. This is the base ARN check performed by the AgentCore control plane. |
-| `bedrock-agentcore:InvokeAgentRuntime` on runtime-endpoint ARN | Allows the Lambda to target the specific `DEFAULT` runtime endpoint. AgentCore evaluates both the runtime ARN and the endpoint ARN — both grants are needed. |
+| `bedrock-agentcore:InvokeAgentRuntime` on runtime ARN | Allows the Lambda (and main_agent) to call the AgentCore Runtime's top-level invoke endpoint. This is the base ARN check performed by the AgentCore control plane. |
+| `bedrock-agentcore:InvokeAgentRuntime` on runtime-endpoint ARN | Allows targeting the specific `DEFAULT` runtime endpoint. AgentCore evaluates both the runtime ARN and the endpoint ARN — both grants are needed. |
 
-> **Why two separate inline policies?** AgentCore performs IAM checks at two levels:
-> the runtime resource and the specific endpoint resource. Granting only one results in
-> an `AccessDenied` from the other level.
+Both policies include **both** main_agent and carpark_agent resource ARNs, because:
+- The **Lambda** invokes main_agent directly.
+- The **main_agent container** (running as `Bedrock_Role`) invokes carpark_agent via A2A.
 
 ---
 
 ### 5a. main_agent → carpark_agent (Agent-to-Agent / A2A)
 
-**Role:** `Bedrock_Role` (main_agent's execution role in AgentCore container)  
-**Required inline policy update:** Add to `AgentCoreInvoke`
+**Role:** `Bedrock_Role` (main_agent's execution role inside the AgentCore container)
 
 The main_agent calls carpark_agent using the `get_nearby_carparks_via_agent` `@tool`:
 
@@ -255,35 +278,38 @@ The main_agent calls carpark_agent using the `get_nearby_carparks_via_agent` `@t
 client = boto3.client("bedrock-agentcore", region_name="ap-southeast-1")
 response = client.invoke_agent_runtime(
     agentRuntimeArn="arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:runtime/deepAgentsCarparkAgent-t3soUG2aAd",
-    payload=json.dumps({...}).encode(),
-    runtimeSessionId=f"carpark-{uuid4().hex[:8]}"
+    payload=json.dumps({
+        "lat":       round(lat, 6),
+        "lon":       round(lon, 6),
+        "limit":     min(limit, 20),
+        "sessionId": f"carpark-{uuid.uuid4().hex}",
+    }).encode(),
+    runtimeSessionId=f"carpark-{uuid.uuid4().hex}",  # must be >= 33 chars (hex is 32 + prefix)
 )
 ```
 
-Since main_agent runs *as* `Bedrock_Role` inside AgentCore, the same role needs
-`InvokeAgentRuntime` on the carpark_agent runtime ARN.
-
-| Permission | Reason |
-|---|---|
-| `bedrock-agentcore:InvokeAgentRuntime` on carpark ARN | Allows the main_agent container (running as `Bedrock_Role`) to invoke carpark_agent as a downstream sub-agent. Without this, the A2A boto3 call fails with `AccessDenied`. |
+Since main_agent runs *as* `Bedrock_Role` inside AgentCore, the same role's
+`AgentCoreInvoke` and `AgentCoreInvokeRuntime` policies (Section 5) already cover
+this — both include the carpark_agent resource ARNs.
 
 ---
 
 ### 5b. carpark_agent → AgentCore Gateway (MCP / SigV4)
 
 **Role:** `Bedrock_Role` (carpark_agent's execution role in AgentCore container)  
-**Required new inline policy:** `AgentCoreInvokeGateway`
+**Inline policy:** `AgentCoreInvokeGateway`
 
 The carpark_agent calls the gateway using a SigV4-signed MCP connection:
 
 ```python
-auth = _SigV4Auth(region="ap-southeast-1")   # botocore SigV4
+auth = _SigV4Auth(region="ap-southeast-1")   # botocore SigV4, service=bedrock-agentcore
 with MCPClient(lambda: streamablehttp_client(GATEWAY_MCP_URL, auth=auth)) as mcp:
     tools = mcp.list_tools_sync()
-    ...
+    agent = Agent(model=model, tools=tools)
+    response = str(agent(query))
 ```
 
-Required policy:
+Required policy (inline on `Bedrock_Role`):
 
 ```json
 {
@@ -298,9 +324,9 @@ Required policy:
 }
 ```
 
-> ⚠️ **Action required (manual):** Add the above as a new inline policy named
-> `AgentCoreInvokeGateway` on `Bedrock_Role`. Without this, the carpark_agent receives
-> `403 Forbidden` from the gateway's IAM authoriser and cannot fetch carpark data.
+| Permission | Reason |
+|---|---|
+| `bedrock-agentcore:InvokeGateway` | Required to send SigV4-signed MCP requests to the gateway endpoint. Requests that lack a valid signature or authorisation return `403 Forbidden`. |
 
 ---
 
@@ -341,24 +367,33 @@ Required policy:
 **Role:** `Bedrock_Role`  
 **Inline policy:** `SecretsManagerAccess`
 
+Both the main_agent and carpark_agent call `config.py → load_secrets()` at startup
+to fetch API keys. Additionally, the AgentCore Gateway service reads the LTA DataMall
+API key from a separate secret managed by the credential vault.
+
 ```json
 {
   "Effect": "Allow",
   "Action": "secretsmanager:GetSecretValue",
-  "Resource": "arn:aws:secretsmanager:ap-southeast-1:373447294617:secret:deep-agents/api-keys-Cmsypp"
+  "Resource": [
+    "arn:aws:secretsmanager:ap-southeast-1:373447294617:secret:deep-agents/api-keys-Cmsypp",
+    "arn:aws:secretsmanager:ap-southeast-1:373447294617:secret:bedrock-agentcore-identity!default/apikey/lta-datamall-api-key-0e976f98"
+  ]
 }
 ```
 
 | Permission | Reason |
 |---|---|
-| `secretsmanager:GetSecretValue` | Allows `config.py` (`load_secrets()`) in the AgentCore container to fetch the JSON secret containing `OPENWEATHERMAP_API_KEY` and `ANTHROPIC_API_KEY` at container startup. Without this, the container raises `RuntimeError` and fails to serve any requests. The resource is scoped to the exact secret ARN (including the random suffix `-Cmsypp`) for least-privilege. |
+| `secretsmanager:GetSecretValue` on `deep-agents/api-keys-Cmsypp` | Allows `load_secrets()` in the AgentCore containers to fetch `OPENWEATHERMAP_API_KEY` and `ANTHROPIC_API_KEY` at container startup. Without this the container raises `RuntimeError` on boot. |
+| `secretsmanager:GetSecretValue` on `bedrock-agentcore-identity!default/apikey/lta-datamall-api-key-0e976f98` | Required by the AgentCore Gateway's credential provider to retrieve the LTA DataMall `AccountKey`. The secret name uses the `!` separator — this is an AgentCore-managed secret; its exact ARN is assigned at credential provider creation time. Without this the gateway cannot authenticate outbound calls to LTA DataMall. |
 
-**Secret contents (`deep-agents/api-keys`):**
+**Secret contents:**
 
-| Key | Purpose |
-|---|---|
-| `OPENWEATHERMAP_API_KEY` | Used by the MCP weather tools to call the OpenWeatherMap API for geocoding and current conditions. |
-| `ANTHROPIC_API_KEY` | Used if the AgentCore container calls the Anthropic API directly (as opposed to routing through Bedrock). |
+| Secret | Key | Purpose |
+|---|---|---|
+| `deep-agents/api-keys` | `OPENWEATHERMAP_API_KEY` | Weather tools — geocoding and current conditions |
+| `deep-agents/api-keys` | `ANTHROPIC_API_KEY` | Direct Anthropic API calls (if not routing through Bedrock) |
+| `bedrock-agentcore-identity!...` | `api_key_value` | LTA DataMall AccountKey (24-char key injected as `AccountKey` header) |
 
 ---
 
@@ -417,11 +452,13 @@ Required policy:
 | AgentCore main_agent | Bedrock (LLM) | `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream` | Managed: `AmazonBedrockFullAccess` |
 | AgentCore main_agent | Secrets Manager | `secretsmanager:GetSecretValue` | Inline: `SecretsManagerAccess` |
 | AgentCore main_agent | ECR | `ecr:GetAuthorizationToken`, `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer` | Managed: `AmazonEC2ContainerRegistryReadOnly` |
-| AgentCore main_agent | carpark_agent (A2A) | `bedrock-agentcore:InvokeAgentRuntime` | Inline: `AgentCoreInvoke` ⚠️ **needs update** |
+| AgentCore main_agent | carpark_agent (A2A) | `bedrock-agentcore:InvokeAgentRuntime` | Inline: `AgentCoreInvoke` + `AgentCoreInvokeRuntime` ✓ |
 | AgentCore carpark_agent | Bedrock (LLM) | `bedrock:InvokeModel` | Managed: `AmazonBedrockFullAccess` |
 | AgentCore carpark_agent | Secrets Manager | `secretsmanager:GetSecretValue` | Inline: `SecretsManagerAccess` |
-| AgentCore carpark_agent | AgentCore Gateway | `bedrock-agentcore:InvokeGateway` | Inline: `AgentCoreInvokeRuntime` ✓ |
-| AgentCore Gateway (execution role) | Workload Identity (API key vault) | `bedrock-agentcore:GetWorkloadAccessToken` | Inline: `AgentCoreGatewayWorkloadIdentity` ⚠️ **needs creation** |
+| AgentCore carpark_agent | AgentCore Gateway | `bedrock-agentcore:InvokeGateway` | Inline: `AgentCoreInvokeGateway` ✓ |
+| AgentCore Gateway (exec role) | Workload Identity token | `bedrock-agentcore:GetWorkloadAccessToken` | Inline: `AgentCoreGatewayWorkloadIdentity` ✓ |
+| AgentCore Gateway (exec role) | API key credential vault | `bedrock-agentcore:GetResourceApiKey` | Inline: `AgentCoreGatewayWorkloadIdentity` ✓ |
+| AgentCore Gateway (exec role) | LTA API key secret | `secretsmanager:GetSecretValue` | Inline: `SecretsManagerAccess` ✓ |
 | AgentCore / Admin | Role self-pass | `iam:PassRole` | Inline: `PassBedrockRole` |
 
 ---
@@ -431,7 +468,7 @@ Required policy:
 The gateway exposes the **Singapore Carpark Availability API** (LTA DataMall
 `CarParkAvailabilityv2`) as a managed MCP endpoint. Any agent or SDK client
 with the `bedrock-agentcore:InvokeGateway` permission can connect to it over
-the MCP protocol without managing the MCP server themselves.
+the MCP protocol without managing an MCP server themselves.
 
 ### Resources
 
@@ -441,7 +478,7 @@ the MCP protocol without managing the MCP server themselves.
 | Gateway ID | `sg-carpark-gateway-z3fc8wewlc` |
 | MCP Endpoint URL | `https://sg-carpark-gateway-z3fc8wewlc.gateway.bedrock-agentcore.ap-southeast-1.amazonaws.com/mcp` |
 | Protocol | MCP (versions `2025-06-18`, `2025-03-26`) |
-| Inbound auth | `AWS_IAM` (SigV4-signed requests) |
+| Inbound auth | `AWS_IAM` (SigV4-signed requests, service `bedrock-agentcore`) |
 | Execution role | `arn:aws:iam::373447294617:role/Bedrock_Role` |
 | Target ID | `D6NDMNRBLS` |
 | Target name | `lta-carpark-rest-api` |
@@ -449,21 +486,21 @@ the MCP protocol without managing the MCP server themselves.
 | OpenAPI schema | `s3://bedrock-agentcore-runtime-373447294617-ap-southeast-1-naea56xtb/OpenAPI/sg_carpark_openapi.yaml` |
 | Backend server | `https://datamall2.mytransport.sg/ltaodataservice` (LTA DataMall v2) |
 | API Key credential provider | `arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:token-vault/default/apikeycredentialprovider/lta-datamall-api-key` |
-| API Key secret ARN | `arn:aws:secretsmanager:ap-southeast-1:373447294617:secret:bedrock-agentcore-identity!default/apikey/lta-datamall-api-key-0e976f98-LMwdhV` |
+| API Key secret ARN | `arn:aws:secretsmanager:ap-southeast-1:373447294617:secret:bedrock-agentcore-identity!default/apikey/lta-datamall-api-key-0e976f98` |
 
 ### Architecture
 
 ```
-MCP Client (agent / SDK)
+MCP Client (carpark_agent, SigV4-signed)
       │
-      │  POST /mcp  (SigV4 signed — AWS_IAM)
+      │  POST /mcp  (AWS_IAM inbound auth)
       ▼
 AgentCore Gateway  sg-carpark-gateway-z3fc8wewlc
-      │  Tool: get_nearby_carparks
-      │  Credential: API key (AccountKey header)
+      │  Tool: lta-carpark-rest-api___get_nearby_carparks
+      │  Credential: AccountKey header (from credential provider)
       ▼
 LTA DataMall REST API  https://datamall2.mytransport.sg/ltaodataservice
-      GET /CarParkAvailabilityv2?$skip=…
+      GET /CarParkAvailabilityv2   (AccountKey: <key>)
 ```
 
 ### 11. Caller → AgentCore Gateway (Inbound IAM Auth)
@@ -485,46 +522,75 @@ the gateway must have the following **identity-based policy** attached:
 |---|---|
 | `bedrock-agentcore:InvokeGateway` | Required to send MCP requests to the gateway endpoint. Requests that do not carry a valid SigV4 signature from an authorised principal receive `403 Forbidden`. |
 
-> **How to sign requests:** Use the AWS SDK's SigV4 signer targeting service
-> `bedrock-agentcore`, region `ap-southeast-1`. The
-> `langchain-mcp-adapters` / `mcp` Python SDK can use `StreamableHTTPTransport`
-> with a signed `httpx` client, or you can use `boto3` and append the
-> `Authorization` header manually.
+> **How to sign requests:** Use botocore `SigV4Auth` targeting service
+> `bedrock-agentcore`, region `ap-southeast-1`. See
+> [`carpark_agent.py`](../agentcore/agents/carpark_agent/carpark_agent.py)
+> for the `_SigV4Auth(httpx.Auth)` implementation, or
+> [`test_gateway.py`](../../../test_gateway.py) for a standalone test client.
 
-### 12. Gateway → LTA DataMall REST API (Outbound API Key + Header Translation)
+---
+
+### 12. Gateway → LTA DataMall REST API (Outbound API Key Injection)
 
 The gateway authenticates outbound calls to the LTA DataMall API using the
-`API_KEY` credential provider (`lta-datamall-api-key`), with a Lambda
-interceptor handling header translation.
+`API_KEY` credential provider (`lta-datamall-api-key`). The key is injected
+**directly** as the `AccountKey` header via the credential provider's
+`credentialParameterName` / `credentialLocation` settings — no Lambda
+interceptor is involved for this header injection.
 
-| Setting | Value |
+**Gateway target credential provider configuration** (in
+[create_gateway_target_input.json](../agentcore/gateway/create_gateway_target_input.json)):
+
+```json
+{
+  "credentialProviderType": "API_KEY",
+  "credentialProvider": {
+    "apiKeyCredentialProvider": {
+      "providerArn": "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:token-vault/default/apikeycredentialprovider/lta-datamall-api-key",
+      "credentialParameterName": "AccountKey",
+      "credentialLocation": "HEADER"
+    }
+  }
+}
+```
+
+| Field | Value | Reason |
+|---|---|---|
+| `credentialParameterName` | `AccountKey` | Name of the HTTP header to inject the API key into. LTA DataMall requires `AccountKey`; without it, all requests receive `404 "The requested API was not found"`. |
+| `credentialLocation` | `HEADER` | Specifies the key goes in an HTTP request header (as opposed to `QUERY_PARAMETER`). |
+
+> **Why not the Lambda interceptor?** The Lambda interceptor at the `REQUEST`
+> interception point only receives **MCP protocol messages** (incoming from the
+> MCP client, `event["mcp"]` format). It does **NOT** receive the outgoing HTTP
+> target requests to LTA DataMall (`event["http"]` format was never triggered in
+> testing). Therefore, any header renaming in the interceptor is dead code for
+> the outbound path — use `credentialParameterName` instead.
+
+**LTA DataMall auth behaviour:**
+
+| Header sent | LTA DataMall response |
 |---|---|
-| Credential provider type | `API_KEY` |
-| Injected header (AgentCore default) | `x-api-key` |
-| LTA expected header | `AccountKey` |
-| Header translation | Lambda interceptor `lta-datamall-api-interceptor` at `REQUEST` point |
+| `AccountKey: <valid-key>` | 200 + carpark data ✅ |
+| `x-api-key: <key>` | 404 "The requested API was not found" |
+| `Authorization: <key>` | 404 "The requested API was not found" |
+| *(no auth header)* | 404 "The requested API was not found" |
 
-**Header translation flow:**
+LTA DataMall returns 404 (not 401/403) for any request that lacks a valid
+`AccountKey` header — this is their convention for unauthenticated requests.
 
-```
-AgentCore Gateway (injects x-api-key)
-      │
-      ▼  REQUEST interception point
-Lambda  lta-datamall-api-interceptor
-      │  renames x-api-key → AccountKey
-      ▼
-LTA DataMall API  (receives AccountKey: <value>) ✓
-```
+---
 
-### 13. Gateway → Lambda Interceptor (REQUEST point)
+### 13. Gateway → Lambda Interceptor (REQUEST point — MCP passthrough)
 
-The gateway calls the header-translation Lambda before forwarding each request
-to the LTA DataMall backend.
+The Lambda interceptor is still registered on the gateway and fires for every
+incoming **MCP protocol message** (initialize, tools/list, tools/call from the
+client). Its role is limited to **passthrough logging** for MCP messages; it
+performs no header manipulation on outbound REST calls.
 
 **Resource:** `arn:aws:lambda:ap-southeast-1:373447294617:function:lta-datamall-api-interceptor`
 
 **Lambda resource policy** (grants `bedrock-agentcore.amazonaws.com` invoke rights
-scoped to this specific gateway ARN — added via `lambda:AddPermission`):
+scoped to this specific gateway ARN):
 
 ```json
 {
@@ -546,56 +612,18 @@ scoped to this specific gateway ARN — added via `lambda:AddPermission`):
 | `lambda:InvokeFunction` (resource policy) | Allows the gateway service to call the interceptor Lambda synchronously on every REQUEST. The `SourceArn` condition prevents any other gateway from invoking this function. |
 | `AWSLambdaBasicExecutionRole` (via `Bedrock_Role`) | Allows the Lambda to write execution logs to CloudWatch (`/aws/lambda/lta-datamall-api-interceptor`). |
 
-**Interceptor logic** — source at
+**Interceptor event formats** — source at
 [aws/agentcore/gateway/lta_datamall_api_interceptor.py](../agentcore/gateway/lta_datamall_api_interceptor.py):
 
-The interceptor receives TWO different event formats at the same REQUEST interception point:
-
-| Event type | Trigger | `event` key | Response required |
+| Event type | `event` key | Response key | Current behaviour |
 |---|---|---|---|
-| MCP protocol message | Incoming MCP `initialize` / `tools/list` / `tools/call` from carpark_agent | `"mcp"` | `{"interceptorOutputVersion":"1.0","mcp":{"transformedGatewayRequest":{"body":{...}}}}` |
-| HTTP target request | Outgoing REST call from gateway to LTA DataMall | `"http"` | `{"interceptorOutputVersion":"1.0","http":{"transformedGatewayRequest":{"headers":{...}}}}` |
+| MCP protocol message (client→gateway) | `"mcp"` | `"mcp": {"transformedGatewayRequest": {"body": ...}}` | Pass body through unchanged ✓ |
+| HTTP target request (gateway→LTA DataMall) | `"http"` | `"http": {"transformedGatewayRequest": {"headers": ...}}` | **Never triggered** — gateway handles header injection via `credentialParameterName` before reaching the interceptor |
 
-**Critical:** the response key is `interceptorOutputVersion` (not `interceptorInputVersion`),
-and the modified data goes under `transformedGatewayRequest` (not `gatewayRequest`).
-
-For MCP messages: the Lambda passes the body through unchanged.  
-For HTTP target requests: the Lambda renames `x-api-key` → `AccountKey` in headers.
-
----
-
-### 14. Gateway → Workload Identity (API Key Fetch)
-
-**Role:** `Bedrock_Role` (gateway execution role)  
-**Required new inline policy:** `AgentCoreGatewayWorkloadIdentity`
-
-When a `tools/call` triggers an outbound REST request to LTA DataMall, the gateway
-must retrieve the stored API key from the API key credential provider.  This uses the
-workload identity token mechanism, which requires:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowGatewayWorkloadIdentityToken",
-      "Effect": "Allow",
-      "Action": "bedrock-agentcore:GetWorkloadAccessToken",
-      "Resource": "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:workload-identity-directory/default/workload-identity/sg-carpark-gateway-z3fc8wewlc"
-    }
-  ]
-}
-```
-
-> ⚠️ **Action required (manual console):** Add the above as a new inline policy named
-> `AgentCoreGatewayWorkloadIdentity` on `Bedrock_Role`.  
-> Console path: **IAM → Roles → Bedrock_Role → Add permissions → Create inline policy → JSON tab**  
-> Without this, every `tools/call` fails with:  
-> `"Failed to fetch outbound api key. Failed to get workload identity token - not authorized to perform: bedrock-agentcore:GetWorkloadAccessToken"`
-
-| Permission | Reason |
-|---|---|
-| `bedrock-agentcore:GetWorkloadAccessToken` on workload identity ARN | Allows the gateway execution role to fetch a short-lived workload token, which the gateway then uses to read the LTA DataMall API key from the credential vault. Without this, the gateway cannot authenticate outbound REST calls to LTA DataMall. |
+**Critical response format:** the response key is `interceptorOutputVersion` (not
+`interceptorInputVersion`), and the modified data goes under
+`transformedGatewayRequest` (not `gatewayRequest`). Using the wrong keys causes
+`"Received invalid response from interceptor"`.
 
 To redeploy after code changes:
 
@@ -609,66 +637,92 @@ aws lambda update-function-code \
   --region ap-southeast-1
 ```
 
-### Local source file
+---
+
+### 14. Gateway → Workload Identity (API Key Fetch)
+
+**Role:** `Bedrock_Role` (gateway execution role)  
+**Inline policy:** `AgentCoreGatewayWorkloadIdentity`
+
+When a `tools/call` triggers an outbound REST request to LTA DataMall, the gateway
+must retrieve the stored API key from the credential vault. This uses a two-step
+workload identity mechanism:
+
+1. Gateway fetches a short-lived workload identity token (`GetWorkloadAccessToken`)
+2. Gateway uses the token to read the API key from the credential vault (`GetResourceApiKey`)
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowGatewayWorkloadIdentityAndApiKey",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:GetWorkloadAccessToken",
+        "bedrock-agentcore:GetResourceApiKey"
+      ],
+      "Resource": "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:*"
+    }
+  ]
+}
+```
+
+> **Why the wildcard resource?** AgentCore checks both `workload-identity-directory/*`
+> and `token-vault/*` ARN patterns during the credential fetch flow. Scoping to either
+> specific ARN results in `AccessDenied` on the other. Using
+> `arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:*` covers both patterns while
+> remaining scoped to this account and region.
+
+| Permission | Reason |
+|---|---|
+| `bedrock-agentcore:GetWorkloadAccessToken` | Allows the gateway execution role to fetch a short-lived workload token used to authenticate against the API key credential vault. Error without it: `"Failed to fetch outbound api key. Failed to get workload identity token - not authorized to perform: bedrock-agentcore:GetWorkloadAccessToken"`. |
+| `bedrock-agentcore:GetResourceApiKey` | Allows the gateway to read the stored API key from the token vault. Required after `GetWorkloadAccessToken` succeeds — without it the credential fetch still fails. |
+
+---
+
+### OpenAPI Schema Notes
 
 The OpenAPI schema source is committed at
 [aws/agentcore/gateway/sg_carpark_openapi.yaml](../agentcore/gateway/sg_carpark_openapi.yaml).
-Update this file and re-upload to S3 whenever the API contract changes:
+
+**Key design constraints:**
+
+| Constraint | Detail |
+|---|---|
+| No `$`-prefixed parameter names | Claude's tool input_schema requires property keys matching `^[a-zA-Z0-9_.-]{1,64}$`. OData's `$skip`, `$top`, `$filter` contain `$` and must not appear in the schema — even as optional parameters. Violating this causes `ValidationException` on `ConverseStream`. |
+| Security scheme must match `credentialParameterName` | The schema's `securitySchemes` entry should use `name: AccountKey` to match the credential provider's injection. This is for documentation correctness; the actual header injection is driven by `credentialParameterName`, not the schema. |
+
+Update and re-upload the schema whenever the API contract changes:
 
 ```bash
 aws s3 cp aws/agentcore/gateway/sg_carpark_openapi.yaml \
   s3://bedrock-agentcore-runtime-373447294617-ap-southeast-1-naea56xtb/OpenAPI/sg_carpark_openapi.yaml \
   --region ap-southeast-1
+
+# Then trigger a gateway target update to reload the schema
+aws bedrock-agentcore-control update-gateway-target \
+  --gateway-identifier sg-carpark-gateway-z3fc8wewlc \
+  --target-id D6NDMNRBLS \
+  --cli-input-json "file://aws/agentcore/gateway/create_gateway_target_input.json" \
+  --region ap-southeast-1
 ```
 
 ---
 
-## Permissions Not Yet Configured (Recommended)
+## Recommended Hardening (non-blocking)
 
-| Gap | Recommended Action | Reason | Priority |
-|---|---|---|---|
-| **`AgentCoreInvoke` — add carpark ARN** | Update `AgentCoreInvoke` inline policy on `Bedrock_Role` to add `deepAgentsCarparkAgent-t3soUG2aAd` ARN | main_agent's A2A boto3 call to carpark_agent will return `AccessDenied` without this | 🔴 Blocking |
-| **`AgentCoreInvokeRuntime` — add carpark endpoint** | Update `AgentCoreInvokeRuntime` inline policy to add `deepAgentsCarparkAgent-t3soUG2aAd/runtime-endpoint/DEFAULT` ARN | Required alongside the runtime ARN check | 🔴 Blocking |
-| **`AgentCoreInvokeGateway` — new policy** | Add new inline policy `AgentCoreInvokeGateway` on `Bedrock_Role` with `bedrock-agentcore:InvokeGateway` on gateway ARN `arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:gateway/sg-carpark-gateway-z3fc8wewlc` | carpark_agent's SigV4-signed MCP calls to the gateway will receive `403 Forbidden` without this | 🔴 Blocking |
-| API Gateway → Cognito Authorizer | Add a Cognito Authorizer to the `POST /chat` method | Currently the API is open to unauthenticated callers at the network level. Cognito login is only enforced in the browser UI. | 🟡 Security |
-| S3 CORS | Add a CORS rule allowing `GET` from the S3 origin | Required if the site moves to a custom domain or if any `fetch()` call targets S3 directly. | 🟡 Security |
-| `AmazonBedrockFullAccess` scope | Replace with a least-privilege inline policy | Full Bedrock access grants all model invocation and management rights. Restrict to only the Claude model ARNs in use. | 🟢 Hardening |
-| `AmazonS3ObjectLambdaExecutionRolePolicy` | Review if needed | This policy is attached to `Bedrock_Role` but the architecture does not appear to use S3 Object Lambda. Remove if unused to follow least-privilege. | 🟢 Hardening |
-| CloudWatch Logs retention | Set a log retention policy on `/aws/lambda/invoke-agentcore` | By default Lambda log groups have no expiry, which incurs unbounded storage costs. | 🟢 Cost |
-| Lambda interceptor CloudWatch log retention | Set retention on `/aws/lambda/lta-datamall-api-interceptor` | Without a retention policy the log group accumulates indefinitely. | 🟢 Cost |
-
-**Steps to apply the 3 blocking IAM changes in the AWS Console:**
-
-1. Go to **IAM → Roles → Bedrock_Role → Permissions** tab
-2. Edit `AgentCoreInvoke` — change `Resource` from a string to a list:
-   ```json
-   "Resource": [
-     "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:runtime/deepAgentsMainAgent-mjSHXIEuzM",
-     "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:runtime/deepAgentsCarparkAgent-t3soUG2aAd"
-   ]
-   ```
-3. Edit `AgentCoreInvokeRuntime` — same change:
-   ```json
-   "Resource": [
-     "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:runtime/deepAgentsMainAgent-mjSHXIEuzM/runtime-endpoint/DEFAULT",
-     "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:runtime/deepAgentsCarparkAgent-t3soUG2aAd/runtime-endpoint/DEFAULT"
-   ]
-   ```
-4. Click **Add permissions → Create inline policy** → JSON editor:
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Effect": "Allow",
-         "Action": "bedrock-agentcore:InvokeGateway",
-         "Resource": "arn:aws:bedrock-agentcore:ap-southeast-1:373447294617:gateway/sg-carpark-gateway-z3fc8wewlc"
-       }
-     ]
-   }
-   ```
-   Name the policy `AgentCoreInvokeGateway` and save.
+| Gap | Recommended Action | Priority |
+|---|---|---|
+| API Gateway → Cognito Authorizer | Add a Cognito Authorizer to the `POST /chat` method. Currently the API is open to unauthenticated callers at the network level; Cognito login is only enforced in the browser UI. | 🟡 Security |
+| S3 CORS | Add a CORS rule allowing `GET` from the S3 origin if the site moves to a custom domain. | 🟡 Security |
+| `AmazonBedrockFullAccess` scope | Replace with a least-privilege inline policy scoped to only the Claude model ARNs in use. | 🟢 Hardening |
+| `AmazonS3ObjectLambdaExecutionRolePolicy` | Review if this policy attached to `Bedrock_Role` is still needed — the architecture does not appear to use S3 Object Lambda. Remove if unused. | 🟢 Hardening |
+| CloudWatch Logs retention | Set a log retention policy on `/aws/lambda/invoke-agentcore` and `/aws/lambda/lta-datamall-api-interceptor` to avoid unbounded storage costs. | 🟢 Cost |
+| AgentCore Gateway — `AgentCoreGatewayWorkloadIdentity` scope | Narrow `Resource: "*"` to the specific workload identity and token vault ARNs once stable (requires testing both ARN patterns). | 🟢 Hardening |
 
 ---
 
-*Generated by Claude Code — verified against live AWS account `373447294617` on 2026-05-24. Gateway + interceptor added 2026-05-24. Carpark agent A2A + IAM gap analysis added 2026-05-25.*
+*Generated by Claude Code — verified against live AWS account `373447294617`.*  
+*Gateway + interceptor added 2026-05-24. Carpark A2A + gateway credential fix 2026-05-27.*  
+*Full stack (Browser → API GW → Lambda → main_agent → carpark_agent → Gateway → LTA DataMall) verified working 2026-05-27.*
