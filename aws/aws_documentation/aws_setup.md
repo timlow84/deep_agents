@@ -43,6 +43,8 @@ Browser
                                                 └──────────────► AgentCore Gateway  sg-carpark-gateway
                                                                     │  retrieves API key from vault
                                                                     ├──► Secrets Manager  (AgentCore-managed)
+                                                                    │  MCP intercept (tools/list, tools/call)
+                                                                    ├──► Lambda  lta-datamall-api-interceptor
                                                                     │  HTTP GET with AccountKey header
                                                                     └──► LTA DataMall API
                                                                             /CarParkAvailabilityv2
