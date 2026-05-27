@@ -3,3 +3,4 @@ httpx
 fastapi
 uvicorn[standard]
 python-dotenv
+boto3

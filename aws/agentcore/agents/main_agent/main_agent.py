@@ -5,16 +5,23 @@ Entry point: app.py (FastAPI HTTP server that AgentCore calls via POST /invoke).
 
 Environment variables required:
     OPENWEATHERMAP_API_KEY  — OpenWeatherMap API key
-    AWS_REGION              — AWS region (default: us-east-1)
-    CLAUDE_MODEL            — Bedrock model ID (default: us.anthropic.claude-haiku-4-5-20251001)
+    AWS_REGION              — AWS region (default: ap-southeast-1)
+    CLAUDE_MODEL            — Bedrock model ID (default: global.anthropic.claude-haiku-4-5-20251001-v1:0)
+
+Optional environment variables:
+    CARPARK_AGENT_ARN       — AgentCore Runtime ARN of the carpark sub-agent.
+                              When set, enables A2A carpark lookups.
+                              e.g. arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/carparkAgent-XXXXXXXXXX
 """
 
 import datetime
 import json
 import os
 import re
+import uuid
 from collections import defaultdict
 
+import boto3
 import httpx
 from strands import Agent, tool
 from strands.models import BedrockModel
@@ -101,10 +108,69 @@ def get_5day_forecast(lat: float, lon: float, units: str = "metric") -> list:
     return result[:5]
 
 
+# ── Carpark A2A tool ──────────────────────────────────────────────────────────
+
+@tool
+def get_nearby_carparks_via_agent(lat: float, lon: float, limit: int = 5) -> str:
+    """Find nearby Singapore carparks with real-time lot availability.
+
+    Delegates to the dedicated carpark AgentCore Runtime via Agent-to-Agent (A2A)
+    invocation.  The carpark agent calls the LTA DataMall API through the
+    Bedrock AgentCore Gateway and returns structured carpark JSON.
+
+    Args:
+        lat:   WGS84 latitude of the search point (Singapore: ~1.3521).
+        lon:   WGS84 longitude of the search point (Singapore: ~103.8198).
+        limit: Maximum number of carparks to return (default 5, max 20).
+
+    Returns:
+        JSON string with keys 'output' (text summary) and 'carparks' (list).
+        Returns an error string if the carpark agent ARN is not configured or
+        the A2A call fails.
+    """
+    carpark_arn = os.getenv("CARPARK_AGENT_ARN", "")
+    if not carpark_arn:
+        return (
+            "Carpark agent is not configured. "
+            "Set the CARPARK_AGENT_ARN environment variable on this AgentCore Runtime "
+            "to enable real-time carpark lookups."
+        )
+
+    region = os.getenv("AWS_REGION", "ap-southeast-1")
+    client = boto3.client("bedrock-agentcore", region_name=region)
+
+    a2a_payload = json.dumps({
+        "lat":       round(lat, 6),
+        "lon":       round(lon, 6),
+        "limit":     min(limit, 20),
+        "sessionId": f"carpark-{uuid.uuid4().hex}",
+    })
+
+    try:
+        response = client.invoke_agent_runtime(
+            agentRuntimeArn=carpark_arn,
+            payload=a2a_payload.encode(),
+            runtimeSessionId=f"carpark-{uuid.uuid4().hex}",  # full 32-char hex → total 40 chars (min is 33)
+        )
+
+        raw = (
+            response["response"].read()
+            if hasattr(response.get("response", b""), "read")
+            else response.get("response", b"")
+        )
+        return raw.decode()
+
+    except Exception as exc:  # noqa: BLE001
+        return f"Error calling carpark agent: {exc}"
+
+
 # ── System prompt ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are a weather assistant agent powered by OpenWeatherMap.
+SYSTEM_PROMPT = """You are a weather and Singapore carpark assistant.
 
+──────────────────────────────────────────────────────────────────
+WEATHER QUERIES
+──────────────────────────────────────────────────────────────────
 When the user asks about weather for any city or location:
 1. Call geocode_city to resolve the city name to coordinates.
 2. Call get_current_weather with those coordinates to get live conditions.
@@ -132,8 +198,37 @@ The JSON block MUST appear first and use this exact structure:
 }
 ```
 
-After the JSON block, add a concise 2-3 sentence plain-text summary suitable for chat.
-For non-weather questions, respond normally as plain text (no JSON block).
+──────────────────────────────────────────────────────────────────
+CARPARK QUERIES (Singapore only)
+──────────────────────────────────────────────────────────────────
+When the user asks about nearby carparks and provides GPS coordinates:
+1. Extract the latitude, longitude, and number of carparks requested.
+2. Call get_nearby_carparks_via_agent with those values.
+3. Parse the returned JSON — it contains "output" (text) and "carparks" (list).
+4. Respond with a JSON block followed by a brief plain-text summary.
+
+The JSON block MUST appear first and use this exact structure:
+```json
+{
+  "type": "carparks",
+  "carparks": [
+    {
+      "carpark_id": "<id>",
+      "development": "<name or null>",
+      "area": "<area or null>",
+      "lat": <float>,
+      "lon": <float>,
+      "available_lots": <int>,
+      "lot_type": "<C|Y|H>",
+      "agency": "<HDB|URA|LTA>",
+      "distance_km": <float>
+    }
+  ]
+}
+```
+
+──────────────────────────────────────────────────────────────────
+For all other questions, respond normally as plain text (no JSON block).
 """
 
 
@@ -153,7 +248,12 @@ def _get_agent() -> "Agent":
         _agent = Agent(
             model=model,
             system_prompt=SYSTEM_PROMPT,
-            tools=[geocode_city, get_current_weather, get_5day_forecast],
+            tools=[
+                geocode_city,
+                get_current_weather,
+                get_5day_forecast,
+                get_nearby_carparks_via_agent,   # A2A → carpark sub-agent
+            ],
         )
     return _agent
 
@@ -161,17 +261,25 @@ def _get_agent() -> "Agent":
 # ── Invocation helper ─────────────────────────────────────────────────────────
 
 def _parse_agent_response(raw: str) -> dict:
-    """Split agent output into optional structured weather JSON + plain text."""
+    """Split agent output into optional structured JSON + plain text.
+
+    Handles both 'weather' and 'carparks' response types.
+    """
     json_match = re.search(r"```json\s*(\{.*?\})\s*```", raw, re.DOTALL)
     if json_match:
         try:
             data = json.loads(json_match.group(1))
+            text = re.sub(r"```json.*?```\s*", "", raw, flags=re.DOTALL).strip()
+
             if data.get("type") == "weather":
-                text = re.sub(r"```json.*?```\s*", "", raw, flags=re.DOTALL).strip()
-                return {"text": text, "weather": data}
+                return {"text": text, "weather": data, "carparks": None}
+
+            if data.get("type") == "carparks":
+                return {"text": text, "weather": None, "carparks": data.get("carparks", [])}
+
         except json.JSONDecodeError:
             pass
-    return {"text": raw.strip(), "weather": None}
+    return {"text": raw.strip(), "weather": None, "carparks": None}
 
 
 def invoke(payload: dict) -> dict:
@@ -181,7 +289,11 @@ def invoke(payload: dict) -> dict:
         payload: dict with keys 'inputText' (required) and optionally 'sessionId'.
 
     Returns:
-        dict with 'output' (plain text summary) and 'weather' (structured data or None).
+        dict with:
+            'output'   — plain text summary
+            'weather'  — structured weather data or None
+            'carparks' — list of carpark dicts or None
+            'sessionId'
     """
     message = payload.get("inputText", payload.get("message", ""))
     session_id = payload.get("sessionId")
@@ -190,7 +302,8 @@ def invoke(payload: dict) -> dict:
     parsed = _parse_agent_response(raw_response)
 
     return {
-        "output": parsed["text"],
-        "weather": parsed["weather"],
+        "output":    parsed["text"],
+        "weather":   parsed["weather"],
+        "carparks":  parsed["carparks"],
         "sessionId": session_id,
     }
