@@ -32,6 +32,9 @@ ORCHESTRATOR_SYSTEM_PROMPT = (
     f"If the user specifies a number of carparks (e.g. '5 nearest', 'top 3'), pass that number as the limit parameter, "
     f"but never exceed the maximum of {_MAX_CARPARKS} results. "
     "Present carpark results in a clear, friendly summary."
+    "\n\n"
+    "If the user's request is not about weather or carparks, reply with EXACTLY this text and nothing else: "
+    "'Type /weather Tokyo or /carpark 5 for carparks. Type /begin to go back to the start.'"
 )
 
 

@@ -55,8 +55,14 @@
 
     /* ── Message list ── */
     #messages {
-      flex: 1;
-      overflow-y: auto;
+      flex: 1 1 0;          /* flex-basis: 0 + min-height: 0 together override the implicit
+                               min-height: auto that would otherwise let this div grow to its
+                               full content height, escape the 100dvh body, and get clipped by
+                               body: overflow: hidden — giving the appearance of truncation with
+                               no scrollbar.  With min-height: 0 the flex layout constrains the
+                               height and overflow-y: scroll does the rest. */
+      min-height: 0;
+      overflow-y: scroll;   /* always show scrollbar so users can see there is more content */
       padding: 24px 16px;
       display: flex;
       flex-direction: column;
@@ -279,13 +285,13 @@
       animation: fadeIn .18s ease;
     }
     .carpark-table-scroll {
-      overflow-x: auto;
-      overflow-y: scroll;
-      padding-bottom: 14px; /* match wrap's border-radius so last row is never clipped */
+      overflow-x: auto;     /* horizontal scroll only — table expands to full height vertically */
+      padding-bottom: 14px; /* prevents last row from being clipped by wrap's border-radius */
       scrollbar-width: thin;
       scrollbar-color: #1a73e8 #e8edf5;
     }
-    .carpark-table-scroll::-webkit-scrollbar        { width: 8px; }
+    /* horizontal scrollbar styling (vertical no longer needed) */
+    .carpark-table-scroll::-webkit-scrollbar        { height: 8px; }
     .carpark-table-scroll::-webkit-scrollbar-track  { background: #e8edf5; }
     .carpark-table-scroll::-webkit-scrollbar-thumb  { background: #1a73e8; border-radius: 4px; }
     .carpark-table-scroll::-webkit-scrollbar-thumb:hover { background: #1558b0; }
@@ -302,9 +308,9 @@
       color: #fff;
     }
     .carpark-table thead th {
-      position: sticky;
-      top: 0;
-      z-index: 1;
+      /* position: sticky was for internal-scroll mode; removed now that the table
+         expands to full height and #messages owns all scrolling. An ancestor with
+         overflow: hidden also silently breaks sticky, so this is cleaner. */
       background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
     }
     .carpark-table th {
@@ -439,6 +445,131 @@
     #send-btn:active:not(:disabled) { transform: scale(.93); }
     #send-btn:disabled { background: #ccc; cursor: not-allowed; }
 
+    /* ── Inline location strip (inside carpark welcome card) ── */
+    .loc-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 9px;
+    }
+    .loc-label {
+      font-size: .84rem;
+      font-weight: 600;
+      color: #202124;
+      flex-shrink: 0;
+    }
+    .loc-row-btns { display: flex; gap: 6px; flex-shrink: 0; }
+    .loc-set-btn {
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: .76rem;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .15s;
+    }
+    .loc-set-btn:hover { background: #1558b0; }
+    .loc-clear-btn {
+      background: transparent;
+      color: #c5221f;
+      border: 1.5px solid #c5221f;
+      border-radius: 20px;
+      padding: 4px 10px;
+      font-size: .76rem;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .15s;
+    }
+    .loc-clear-btn:hover { background: #fce8e6; }
+    .loc-details {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      margin-top: 3px;
+      margin-bottom: 6px;
+    }
+    .loc-details .loc-status  { font-size: .79rem; color: #80868b; font-style: italic; }
+    .loc-details .loc-denied  { font-size: .79rem; color: #c5221f; }
+    .loc-details .loc-address { font-size: .81rem; color: #3c4043; }
+    .loc-details .loc-coords  { font-family: 'Courier New', monospace; font-size: .75rem; color: #5f6368; }
+    .loc-details .loc-link {
+      display: inline-flex; align-items: center; gap: 3px;
+      color: #1a73e8; font-size: .75rem; text-decoration: none;
+    }
+    .loc-details .loc-link:hover { text-decoration: underline; }
+
+    /* ── Location picker modal ── */
+    #loc-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    #loc-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,.48);
+    }
+    #loc-modal-dialog {
+      position: relative;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 8px 40px rgba(0,0,0,.28);
+      width: min(92vw, 640px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #loc-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px 18px;
+      border-bottom: 1px solid #e0e0e0;
+      font-size: .92rem;
+      font-weight: 600;
+      color: #202124;
+    }
+    #loc-modal-close {
+      background: none; border: none; cursor: pointer;
+      font-size: 1.05rem; color: #5f6368; padding: 2px 6px; line-height: 1;
+    }
+    #loc-modal-close:hover { color: #202124; }
+    #loc-modal-map { height: 400px; width: 100%; }
+    #loc-modal-footer {
+      padding: 11px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-top: 1px solid #e0e0e0;
+    }
+    #loc-modal-coords {
+      font-size: .78rem; color: #5f6368;
+      font-family: 'Courier New', monospace;
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .loc-modal-btns { display: flex; gap: 8px; flex-shrink: 0; }
+    #loc-modal-cancel {
+      background: #f0f4f8; color: #3c4043; border: none; border-radius: 20px;
+      padding: 7px 18px; font-size: .84rem; font-weight: 500; cursor: pointer;
+      transition: background .15s;
+    }
+    #loc-modal-cancel:hover { background: #dde3ec; }
+    #loc-modal-confirm {
+      background: #1a73e8; color: #fff; border: none; border-radius: 20px;
+      padding: 7px 18px; font-size: .84rem; font-weight: 500; cursor: pointer;
+      transition: background .15s;
+    }
+    #loc-modal-confirm:hover:not(:disabled) { background: #1558b0; }
+    #loc-modal-confirm:disabled { background: #ccc; cursor: not-allowed; }
+
     /* ── Author credit ── */
     #author-credit {
       flex-shrink: 0;
@@ -486,6 +617,16 @@
         Use a slash command for instant real-time lot availability.<br>
         <code>/carparks 5</code> &nbsp;— find the 5 nearest carparks<br>
         <code>/carparks 10</code> — find the 10 nearest carparks
+        <div class="loc-row">
+          <span class="loc-label" id="loc-label">📍 Current Location</span>
+          <div class="loc-row-btns">
+            <button class="loc-set-btn" id="loc-set-btn">Set My Location</button>
+            <button class="loc-clear-btn" id="loc-clear-btn" style="display:none">Clear</button>
+          </div>
+        </div>
+        <div class="loc-details" id="loc-details">
+          <span class="loc-status">Detecting location…</span>
+        </div>
         <div class="hint">Requires browser location permission to be granted. <span id="carpark-limit-hint">Maximum 20 results per query.</span></div>
       </div>
     </div>
@@ -494,14 +635,38 @@
 
 <div id="input-area">
   <div id="slash-menu"></div>
-  <textarea id="user-input" placeholder="Ask about weather, or type /weather Tokyo · /carparks 5 for carparks…" rows="1"></textarea>
+  <textarea id="user-input" placeholder="Type /weather Tokyo or /carpark 5 for carparks. Type /begin to go back to the start." rows="1"></textarea>
   <button id="send-btn" title="Send">&#9658;</button>
+</div>
+
+<!-- ── Location picker modal (must be before <script> so getElementById finds it) ── -->
+<div id="loc-modal" style="display:none">
+  <div id="loc-modal-backdrop"></div>
+  <div id="loc-modal-dialog">
+    <div id="loc-modal-header">
+      <span>📍 Set My Location — Singapore</span>
+      <button id="loc-modal-close" title="Close">✕</button>
+    </div>
+    <div id="loc-modal-map"></div>
+    <div id="loc-modal-footer">
+      <span id="loc-modal-coords">Click on the map to pin a location</span>
+      <div class="loc-modal-btns">
+        <button id="loc-modal-cancel">Cancel</button>
+        <button id="loc-modal-confirm" disabled>Confirm</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
   const messagesEl = document.getElementById('messages');
   const inputEl    = document.getElementById('user-input');
   const sendBtn    = document.getElementById('send-btn');
+
+  // Capture the welcome node before anything can call removeWelcome().
+  // Detached DOM nodes stay alive in memory, so we can re-append this
+  // at the bottom of the conversation whenever the user types /begin.
+  const welcomeEl = messagesEl.querySelector('.welcome');
 
   const conversationHistory = [];
 
@@ -518,17 +683,219 @@
     })
     .catch(() => {}); // silently keep the default
 
-  // Request geolocation once on load; stored for every subsequent request
-  let userCoords = null;
+  // ── Location state ──
+  // browserCoords  — live GPS from the browser (null if denied/unavailable)
+  // customCoords   — user-pinned location from the map picker (null if not set)
+  // userCoords     — the coords actually used for carpark queries (custom ?? browser)
+  let userCoords    = null;
+  let browserCoords = null;
+  let customCoords  = null;
+
+  // ── Shared helpers ──
+  async function _reverseGeocode(lat, lon) {
+    try {
+      const r = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}`,
+        { headers: { 'Accept-Language': 'en' } }
+      );
+      if (!r.ok) return null;
+      const geo  = await r.json();
+      const addr = geo.address || {};
+      const parts = [
+        addr.road || addr.pedestrian || addr.footway,
+        addr.suburb || addr.neighbourhood || addr.quarter,
+        addr.city || addr.town || addr.village || addr.county,
+        addr.country,
+      ].filter(Boolean);
+      return parts.join(', ') || geo.display_name || null;
+    } catch { return null; }
+  }
+
+  function _setLocDetails(lat, lon, addressText = null) {
+    const el = document.getElementById('loc-details');
+    if (!el) return;
+    const ls = lat.toFixed(5), lo = lon.toFixed(5);
+    el.innerHTML = (addressText
+      ? `<span class="loc-address">${addressText}</span>`
+      : `<span class="loc-status">Resolving address…</span>`) +
+      `<span class="loc-coords">${ls}, ${lo}</span>` +
+      `<a class="loc-link" href="https://www.google.com/maps?q=${ls},${lo}" target="_blank" rel="noopener noreferrer">📍 View on Google Maps</a>`;
+  }
+
+  async function _showLocation(lat, lon) {
+    _setLocDetails(lat, lon);
+    const addr = await _reverseGeocode(lat, lon);
+    if (addr) _setLocDetails(lat, lon, addr);
+  }
+
+  // ── Browser geolocation ──
   if ('geolocation' in navigator) {
     navigator.geolocation.getCurrentPosition(
-      ({ coords }) => {
-        userCoords = { lat: coords.latitude, lon: coords.longitude };
-        inputEl.placeholder = 'Ask about weather, or type /weather Tokyo · /carparks 5 for carparks…';
+      async ({ coords }) => {
+        browserCoords = { lat: coords.latitude, lon: coords.longitude };
+        if (!customCoords) {
+          // Only write the browser cookie when no custom pin is active —
+          // otherwise we'd overwrite a type:"custom" cookie with type:"browser"
+          // and the custom location would be lost on the next page refresh.
+          _saveLocCookie(coords.latitude, coords.longitude, 'browser');
+          userCoords = browserCoords;
+          await _showLocation(coords.latitude, coords.longitude);
+        }
       },
-      () => { userCoords = null; } // denied or unavailable — silently ignore
+      () => {
+        browserCoords = null;
+        if (!customCoords) {
+          userCoords = null;
+          const el = document.getElementById('loc-details');
+          if (el) el.innerHTML = '<span class="loc-denied">Location access denied or unavailable. Carpark search requires browser location permission.</span>';
+        }
+      }
     );
+  } else {
+    const el = document.getElementById('loc-details');
+    if (el) el.innerHTML = '<span class="loc-denied">Geolocation is not supported by this browser.</span>';
   }
+
+  // ── Location picker modal ──
+  const locModal        = document.getElementById('loc-modal');
+  const locModalMapEl   = document.getElementById('loc-modal-map');
+  const locModalCoords  = document.getElementById('loc-modal-coords');
+  const locModalConfirm = document.getElementById('loc-modal-confirm');
+  const locLabel        = document.getElementById('loc-label');
+  const locClearBtn     = document.getElementById('loc-clear-btn');
+
+  // ── Short-term location cookie (1 hour) ──
+  const LOC_COOKIE = 'sg_chatbot_location';
+  function _saveLocCookie(lat, lon, type) {
+    const val     = JSON.stringify({ lat, lon, type });
+    const expires = new Date(Date.now() + 3600 * 1000).toUTCString();
+    document.cookie = `${LOC_COOKIE}=${encodeURIComponent(val)}; expires=${expires}; path=/; SameSite=Lax`;
+  }
+  function _readLocCookie() {
+    const m = document.cookie.match(/(?:^|;\s*)sg_chatbot_location=([^;]+)/);
+    if (!m) return null;
+    try { return JSON.parse(decodeURIComponent(m[1])); } catch { return null; }
+  }
+  function _clearLocCookie() {
+    document.cookie = `${LOC_COOKIE}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
+  }
+
+  // ── Restore location from cookie on page load / refresh ──
+  (function _restoreFromCookie() {
+    const saved = _readLocCookie();
+    if (!saved) return;
+    const coords = { lat: saved.lat, lon: saved.lon };
+    userCoords = coords;
+    if (saved.type === 'custom') {
+      customCoords = coords;
+      locLabel.textContent  = '📍 Custom Location';
+      locClearBtn.style.display = '';
+    } else {
+      // Treat saved browser coords as a warm start; fresh GPS will overwrite soon
+      browserCoords = coords;
+    }
+    _showLocation(saved.lat, saved.lon);
+  })();
+
+  const SG_BOUNDS = [[1.1304, 103.6], [1.4561, 104.1]];
+  const SG_CENTER = [1.3521, 103.8198];
+
+  let pickerMap    = null;
+  let pickerMarker = null;
+  let pendingCoords = null;
+
+  function _onMarkerDrag() {
+    const pos = pickerMarker.getLatLng();
+    pendingCoords = { lat: pos.lat, lon: pos.lng };
+    locModalCoords.textContent = `${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)}`;
+    locModalConfirm.disabled = false;
+  }
+
+  function _placePendingMarker(lat, lon) {
+    pendingCoords = { lat, lon };
+    locModalCoords.textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    locModalConfirm.disabled = false;
+    if (pickerMarker) {
+      pickerMarker.setLatLng([lat, lon]);
+    } else {
+      pickerMarker = L.marker([lat, lon], { draggable: true }).addTo(pickerMap);
+      pickerMarker.on('dragend', _onMarkerDrag);
+    }
+  }
+
+  function openLocModal() {
+    locModal.style.display = 'flex';
+    pendingCoords = null;
+    locModalCoords.textContent = 'Click on the map to pin a location';
+    locModalConfirm.disabled = true;
+
+    requestAnimationFrame(() => {
+      if (!pickerMap) {
+        // First open — create map
+        const init = userCoords ? [userCoords.lat, userCoords.lon] : SG_CENTER;
+        pickerMap = L.map('loc-modal-map', {
+          center: init,
+          zoom: userCoords ? 15 : 12,
+          maxBounds: SG_BOUNDS,
+          maxBoundsViscosity: 1.0,
+          minZoom: 11,
+        });
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          maxZoom: 19,
+        }).addTo(pickerMap);
+
+        // Pre-place marker on current active location
+        if (userCoords) _placePendingMarker(userCoords.lat, userCoords.lon);
+
+        pickerMap.on('click', e => _placePendingMarker(e.latlng.lat, e.latlng.lng));
+
+      } else {
+        // Re-open — reset state, recentre
+        pickerMap.invalidateSize();
+        if (pickerMarker) { pickerMap.removeLayer(pickerMarker); pickerMarker = null; }
+        if (userCoords) {
+          pickerMap.setView([userCoords.lat, userCoords.lon], 15);
+          _placePendingMarker(userCoords.lat, userCoords.lon);
+        } else {
+          pickerMap.setView(SG_CENTER, 12);
+        }
+      }
+    });
+  }
+
+  function closeLocModal() { locModal.style.display = 'none'; }
+
+  document.getElementById('loc-set-btn').addEventListener('click', openLocModal);
+  document.getElementById('loc-modal-backdrop').addEventListener('click', closeLocModal);
+  document.getElementById('loc-modal-close').addEventListener('click', closeLocModal);
+  document.getElementById('loc-modal-cancel').addEventListener('click', closeLocModal);
+
+  locModalConfirm.addEventListener('click', async () => {
+    if (!pendingCoords) return;
+    customCoords = pendingCoords;
+    userCoords   = customCoords;
+    closeLocModal();
+    locLabel.textContent = '📍 Custom Location';
+    locClearBtn.style.display = '';
+    _saveLocCookie(customCoords.lat, customCoords.lon, 'custom');
+    await _showLocation(customCoords.lat, customCoords.lon);
+  });
+
+  locClearBtn.addEventListener('click', async () => {
+    customCoords = null;
+    userCoords   = browserCoords;
+    locClearBtn.style.display = 'none';
+    locLabel.textContent = '📍 Current Location';
+    if (browserCoords) {
+      _saveLocCookie(browserCoords.lat, browserCoords.lon, 'browser');
+      await _showLocation(browserCoords.lat, browserCoords.lon);
+    } else {
+      _clearLocCookie();
+      const el = document.getElementById('loc-details');
+      if (el) el.innerHTML = '<span class="loc-status">Detecting location…</span>';
+    }
+  });
 
   function renderWeatherCard(data) {
     removeWelcome();
@@ -739,21 +1106,8 @@
             const row = tableScrollEl.querySelector(`tr[data-carpark-idx="${i}"]`);
             if (!row) return;
             row.classList.add('row-highlighted');
-
-            // Scroll only the table's own container (not the page) to centre the row.
-            // getBoundingClientRect gives positions relative to the current viewport,
-            // so we convert that to an absolute offset within the scroll container.
-            const rowRect       = row.getBoundingClientRect();
-            const containerRect = tableScrollEl.getBoundingClientRect();
-            const absTop = rowRect.top - containerRect.top + tableScrollEl.scrollTop;
-            tableScrollEl.scrollTop = Math.max(
-              0,
-              absTop - tableScrollEl.clientHeight / 2 + row.offsetHeight / 2
-            );
-
-            // Then scroll #messages so the table header is visible at the top.
-            const tableWrap = tableScrollEl.closest('.carpark-table-wrap');
-            if (tableWrap) tableWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // Table no longer scrolls internally — scroll #messages to bring the row into view
+            row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           });
         bounds.push([cp.lat, cp.lon]);
       });
@@ -826,7 +1180,7 @@
     wrap.className = 'carpark-table-wrap';
     const scrollDiv = document.createElement('div');
     scrollDiv.className = 'carpark-table-scroll';
-    scrollDiv.style.maxHeight = '530px';
+    // No maxHeight — table expands to show all rows; #messages owns the vertical scroll
 
     const table = document.createElement('table');
     table.className = 'carpark-table';
@@ -964,6 +1318,28 @@
       return;
     }
 
+    // Intercept /begin — re-append the original welcome node at the bottom of the
+    // conversation without touching the existing messages or reloading the page.
+    // Because we move the same DOM node (not a clone), all IDs stay unique and the
+    // location strip keeps its live state (label, details, cookie) exactly as-is.
+    if (/^\/begin\s*$/i.test(text)) {
+      inputEl.value = '';
+      inputEl.style.height = '42px';
+      messagesEl.appendChild(welcomeEl);
+      scrollBottom();
+      return;
+    }
+
+    // Catch-all: anything else — show help text, no LLM call
+    removeWelcome();
+    inputEl.value = '';
+    inputEl.style.height = '42px';
+    addBubble(text, 'user');
+    addBubble('Type /weather Tokyo or /carpark 5 for carparks. Type /begin to go back to the start.', 'assistant');
+    return;
+
+    // ── LLM path (only reached if the catch-all above is removed) ──
+    // eslint-disable-next-line no-unreachable
     inputEl.value = '';
     inputEl.style.height = '42px';
     setInputEnabled(false);
@@ -1051,6 +1427,7 @@
   const SLASH_COMMANDS = [
     { cmd: '/weather',  fill: '/weather ',  desc: 'Current weather — e.g. /weather Tokyo' },
     { cmd: '/carparks', fill: '/carparks ', desc: 'Nearest carparks — e.g. /carparks 5'  },
+    { cmd: '/begin',    fill: '/begin',     desc: 'Go back to the start'                  },
   ];
   let slashActive = -1;
 
